@@ -5,6 +5,7 @@ export class UpdateUserDto extends PartialType(
   PickType(CreateUserDto, [
     'full_name',
     'email',
+    'password',
     'user_type',
     'status',
     'role_id',

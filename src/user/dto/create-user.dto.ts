@@ -17,6 +17,10 @@ export class CreateUserDto {
 
   @IsString()
   @IsNotEmpty()
+  password: string | undefined;
+
+  @IsString()
+  @IsNotEmpty()
   full_name: string | undefined;
 
   @IsEnum(UserType)

@@ -6,6 +6,17 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { validate } from './env.validation';
 import { UserModule } from './user/user.module';
 import { RoleModule } from './role/role.module';
+import { AuthModule } from './auth/auth.module';
+import { ReservationModule } from './reservation/reservation.module';
+import { SpaceTypeModule } from './space_type/space_type.module';
+import { SpaceModule } from './space/space.module';
+import { BlockModule } from './block/block.module';
+import { ZoneModule } from './zone/zone.module';
+import { FloorModule } from './floor/floor.module';
+import { BuildingModule } from './building/building.module';
+import { SiteModule } from './site/site.module';
+import { SpaceUserUsageModule } from './space_user_usage/space_user_usage.module';
+import { ReleaseModule } from './release/release.module';
 
 @Module({
   imports: [
@@ -30,6 +41,17 @@ import { RoleModule } from './role/role.module';
     }),
     UserModule,
     RoleModule,
+    AuthModule,
+    ReservationModule,
+    SpaceTypeModule,
+    SpaceModule,
+    BlockModule,
+    ZoneModule,
+    FloorModule,
+    BuildingModule,
+    SiteModule,
+    SpaceUserUsageModule,
+    ReleaseModule,
 
     // App Module imports other modules here
   ],

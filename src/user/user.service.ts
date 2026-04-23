@@ -1,11 +1,17 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { RoleService } from '../role/role.service';
-//import { Role } from '../role/entities/role.entity';
+import bcrypt from 'bcrypt';
+
+const PASSWORD_SALT_ROUNDS = 12;
 
 @Injectable()
 export class UserService {
@@ -16,10 +22,25 @@ export class UserService {
     private readonly roleService: RoleService,
   ) {}
 
-  async create(createUserDto: CreateUserDto) {
-    const { role_id, ...rest } = createUserDto;
+  private hashPassword(password: string): Promise<string> {
+    return bcrypt.hash(password, PASSWORD_SALT_ROUNDS);
+  }
 
-    const newUser = this.userRepository.create(rest);
+  comparePassword(password: string, passwordHash: string): Promise<boolean> {
+    return bcrypt.compare(password, passwordHash);
+  }
+
+  async create(createUserDto: CreateUserDto) {
+    const { role_id, password, ...rest } = createUserDto;
+
+    if (password === undefined) {
+      throw new BadRequestException('Password is required');
+    }
+
+    const newUser = this.userRepository.create({
+      ...rest,
+      password: await this.hashPassword(password),
+    });
 
     if (role_id) {
       const existingRole = await this.roleService.findOne(role_id);
@@ -55,20 +76,32 @@ export class UserService {
     return users;
   }
 
+  findByEmail(email: string) {
+    return this.userRepository.findOne({
+      where: { email },
+      relations: ['role'],
+    });
+  }
+
   async update(id: number, updateUserDto: UpdateUserDto) {
     const existingUser = await this.findOne(id);
+    const { role_id, password, ...rest } = updateUserDto;
 
-    if (updateUserDto.role_id) {
-      const existingRole = await this.roleService.findOne(
-        updateUserDto.role_id,
-      );
+    if (role_id) {
+      const existingRole = await this.roleService.findOne(role_id);
       existingUser.role = existingRole;
     }
 
-    this.userRepository.merge(existingUser, {
-      ...updateUserDto,
+    const updateUser = {
+      ...rest,
       role: existingUser.role,
-    });
+    } as Partial<User>;
+
+    if (password !== undefined) {
+      updateUser.password = await this.hashPassword(password);
+    }
+
+    this.userRepository.merge(existingUser, updateUser);
 
     return this.userRepository.save(existingUser);
   }
