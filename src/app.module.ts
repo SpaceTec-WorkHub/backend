@@ -17,6 +17,13 @@ import { BuildingModule } from './building/building.module';
 import { SiteModule } from './site/site.module';
 import { SpaceUserUsageModule } from './space_user_usage/space_user_usage.module';
 import { ReleaseModule } from './release/release.module';
+import { CheckEventModule } from './check_event/check_event.module';
+import { PriorityLevelModule } from './priority_level/priority_level.module';
+import { VisitModule } from './visit/visit.module';
+import { UserNeedModule } from './user_need/user_need.module';
+import { EventModule } from './event/event.module';
+import { PointsLedgerModule } from './points_ledger/points_ledger.module';
+import { BadgeModule } from './badge/badge.module';
 
 @Module({
   imports: [
@@ -52,6 +59,13 @@ import { ReleaseModule } from './release/release.module';
     SiteModule,
     SpaceUserUsageModule,
     ReleaseModule,
+    CheckEventModule,
+    PriorityLevelModule,
+    VisitModule,
+    UserNeedModule,
+    EventModule,
+    PointsLedgerModule,
+    BadgeModule,
 
     // App Module imports other modules here
   ],

@@ -3,6 +3,8 @@ import {
 	IsNotEmpty,
 	IsNumber,
 	IsEnum,
+	IsString,
+	IsOptional,
 } from 'class-validator';
 import { ReservationStatus } from '../entities/reservation.entity';
 
@@ -19,6 +21,10 @@ export class CreateReservationDto {
 	@IsNotEmpty()
 	status!: ReservationStatus;
 
+	@IsString()
+	@IsNotEmpty()
+	code!: string;
+
 	@IsNumber()
 	@IsNotEmpty()
 	user_id!: number;
@@ -26,4 +32,8 @@ export class CreateReservationDto {
 	@IsNumber()
 	@IsNotEmpty()
 	space_id!: number;
+
+	@IsNumber()
+	@IsOptional()
+	event_id?: number;
 }

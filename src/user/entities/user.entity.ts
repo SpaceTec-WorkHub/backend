@@ -10,6 +10,11 @@ import { BaseEntity } from '../../shared/base.entity';
 import { Role } from '../../role/entities/role.entity';
 import { SpaceUserUsage } from '../../space_user_usage/entities/space_user_usage.entity';
 import { Reservation } from '../../reservation/entities/reservation.entity';
+import { Visit } from '../../visit/entities/visit.entity';
+import { UserNeed } from '../../user_need/entities/user_need.entity';
+import { Event } from '../../event/entities/event.entity';
+import { PointsLedger } from '../../points_ledger/entities/points_ledger.entity';
+import { UserBadge } from '../../badge/entities/user_badge.entity';
 
 export enum UserType {
   INTERNAL = 'internal',
@@ -50,4 +55,19 @@ export class User extends BaseEntity {
 
   @OneToMany(() => Reservation, (reservation) => reservation.user)
   reservations!: Reservation[];
+
+  @OneToMany(() => Visit, (visit) => visit.user)
+  visits!: Visit[];
+
+  @OneToMany(() => UserNeed, (userNeed) => userNeed.user)
+  userNeeds!: UserNeed[];
+
+  @OneToMany(() => Event, (event) => event.creator)
+  createdEvents!: Event[];
+
+  @OneToMany(() => PointsLedger, (pointsLedger) => pointsLedger.user)
+  pointsLedger!: PointsLedger[];
+
+  @OneToMany(() => UserBadge, (userBadge) => userBadge.user)
+  badges!: UserBadge[];
 }

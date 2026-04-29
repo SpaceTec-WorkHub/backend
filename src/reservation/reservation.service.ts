@@ -22,14 +22,14 @@ export class ReservationService {
 
   findAll() {
     return this.reservationRepository.find({
-      relations: ['user', 'space', 'release'],
+      relations: ['user', 'space', 'release', 'event', 'checkEvents'],
     });
   }
 
   async findOne(reservation_id: number) {
     const reservation = await this.reservationRepository.findOne({
       where: { reservation_id },
-      relations: ['user', 'space', 'release'],
+      relations: ['user', 'space', 'release', 'event', 'checkEvents'],
     });
 
     if (!reservation) {
