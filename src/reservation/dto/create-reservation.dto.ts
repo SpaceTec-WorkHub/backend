@@ -1,10 +1,4 @@
-import {
-	IsDateString,
-	IsNotEmpty,
-	IsNumber,
-	IsEnum,
-} from 'class-validator';
-import { ReservationStatus } from '../entities/reservation.entity';
+import { IsDateString, IsNotEmpty, IsNumber } from 'class-validator';
 
 export class CreateReservationDto {
 	@IsDateString()
@@ -14,10 +8,6 @@ export class CreateReservationDto {
 	@IsDateString()
 	@IsNotEmpty()
 	end_time!: string;
-
-	@IsEnum(ReservationStatus)
-	@IsNotEmpty()
-	status!: ReservationStatus;
 
 	@IsNumber()
 	@IsNotEmpty()

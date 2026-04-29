@@ -17,6 +17,8 @@ import { BuildingModule } from './building/building.module';
 import { SiteModule } from './site/site.module';
 import { SpaceUserUsageModule } from './space_user_usage/space_user_usage.module';
 import { ReleaseModule } from './release/release.module';
+import { DevSeedService } from './dev-seed.service';
+import { GamificationModule } from './gamification/gamification.module';
 
 @Module({
   imports: [
@@ -35,6 +37,7 @@ import { ReleaseModule } from './release/release.module';
         password: config.get<string>('DB_PASSWORD'),
         database: config.get<string>('DB_NAME'),
         autoLoadEntities: true,
+        synchronize: false,
         ssl:
           process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
       }),
@@ -52,10 +55,11 @@ import { ReleaseModule } from './release/release.module';
     SiteModule,
     SpaceUserUsageModule,
     ReleaseModule,
+    GamificationModule,
 
     // App Module imports other modules here
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, DevSeedService],
 })
 export class AppModule {}
