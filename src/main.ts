@@ -17,11 +17,11 @@ async function bootstrap() {
   app.enableCors({
     origin: [
       'http://localhost:5173',
-      'https://work-hub-theta.vercel.app/'
+      'https://work-hub-theta.vercel.app'
     ],
-    credetials: true,
+    credentials: true,
   });
 
-  await app.listen(process.env.PORT ?? 3000);
+  await app.listen(process.env.PORT ?? 3000, '0.0.0.0');
 }
 bootstrap();
