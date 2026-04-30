@@ -1,36 +1,67 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class CreateReservation1777508461179 implements MigrationInterface {
-    name = 'CreateReservation1777508461179'
+export class CreateSpaceAndReservation1777508461179 implements MigrationInterface {
+  name = 'CreateSpaceAndReservation1777508461179';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "incident" DROP CONSTRAINT "FK_incident_reservation"`);
-        await queryRunner.query(`ALTER TABLE "incident" DROP CONSTRAINT "FK_incident_previous_reservation"`);
-        await queryRunner.query(`ALTER TABLE "incident" DROP CONSTRAINT "FK_incident_space"`);
-        await queryRunner.query(`ALTER TABLE "incident" DROP CONSTRAINT "FK_incident_reported_by"`);
-        await queryRunner.query(`ALTER TABLE "reservation" DROP CONSTRAINT "FK_reservation_reassigned_space"`);
-        await queryRunner.query(`ALTER TABLE "gamification_reward" ALTER COLUMN "period_start" DROP NOT NULL`);
-        await queryRunner.query(`ALTER TABLE "gamification_reward" ALTER COLUMN "period_end" DROP NOT NULL`);
-        await queryRunner.query(`ALTER TABLE "incident" ADD CONSTRAINT "FK_8ffb78da8fc63aa847635614ec0" FOREIGN KEY ("reservation_id") REFERENCES "reservation"("reservation_id") ON DELETE CASCADE ON UPDATE NO ACTION`);
-        await queryRunner.query(`ALTER TABLE "incident" ADD CONSTRAINT "FK_23ab18128bb0939d3e768faf414" FOREIGN KEY ("previous_reservation_id") REFERENCES "reservation"("reservation_id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
-        await queryRunner.query(`ALTER TABLE "incident" ADD CONSTRAINT "FK_121cde91e806ae580a43f4b90b0" FOREIGN KEY ("space_id") REFERENCES "space"("space_id") ON DELETE CASCADE ON UPDATE NO ACTION`);
-        await queryRunner.query(`ALTER TABLE "incident" ADD CONSTRAINT "FK_583453357cb3e8da99d4bc5a28c" FOREIGN KEY ("reported_by") REFERENCES "user"("user_id") ON DELETE CASCADE ON UPDATE NO ACTION`);
-        await queryRunner.query(`ALTER TABLE "reservation" ADD CONSTRAINT "FK_e62e445b5606e787fb9a8c4a765" FOREIGN KEY ("reassigned_space_id") REFERENCES "space"("space_id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
-    }
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`
+      DO $$
+      BEGIN
+        CREATE TYPE "public"."reservation_status_enum" AS ENUM('pending', 'approved', 'completed');
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;
+    `);
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "reservation" DROP CONSTRAINT "FK_e62e445b5606e787fb9a8c4a765"`);
-        await queryRunner.query(`ALTER TABLE "incident" DROP CONSTRAINT "FK_583453357cb3e8da99d4bc5a28c"`);
-        await queryRunner.query(`ALTER TABLE "incident" DROP CONSTRAINT "FK_121cde91e806ae580a43f4b90b0"`);
-        await queryRunner.query(`ALTER TABLE "incident" DROP CONSTRAINT "FK_23ab18128bb0939d3e768faf414"`);
-        await queryRunner.query(`ALTER TABLE "incident" DROP CONSTRAINT "FK_8ffb78da8fc63aa847635614ec0"`);
-        await queryRunner.query(`ALTER TABLE "gamification_reward" ALTER COLUMN "period_end" SET NOT NULL`);
-        await queryRunner.query(`ALTER TABLE "gamification_reward" ALTER COLUMN "period_start" SET NOT NULL`);
-        await queryRunner.query(`ALTER TABLE "reservation" ADD CONSTRAINT "FK_reservation_reassigned_space" FOREIGN KEY ("reassigned_space_id") REFERENCES "space"("space_id") ON DELETE SET NULL ON UPDATE NO ACTION`);
-        await queryRunner.query(`ALTER TABLE "incident" ADD CONSTRAINT "FK_incident_reported_by" FOREIGN KEY ("reported_by") REFERENCES "user"("user_id") ON DELETE CASCADE ON UPDATE NO ACTION`);
-        await queryRunner.query(`ALTER TABLE "incident" ADD CONSTRAINT "FK_incident_space" FOREIGN KEY ("space_id") REFERENCES "space"("space_id") ON DELETE CASCADE ON UPDATE NO ACTION`);
-        await queryRunner.query(`ALTER TABLE "incident" ADD CONSTRAINT "FK_incident_previous_reservation" FOREIGN KEY ("previous_reservation_id") REFERENCES "reservation"("reservation_id") ON DELETE SET NULL ON UPDATE NO ACTION`);
-        await queryRunner.query(`ALTER TABLE "incident" ADD CONSTRAINT "FK_incident_reservation" FOREIGN KEY ("reservation_id") REFERENCES "reservation"("reservation_id") ON DELETE CASCADE ON UPDATE NO ACTION`);
-    }
+    await queryRunner.query(`
+      CREATE TABLE IF NOT EXISTS "space" (
+        "createdAt" TIMESTAMP NOT NULL DEFAULT now(),
+        "updatedAt" TIMESTAMP NOT NULL DEFAULT now(),
+        "deletedAt" TIMESTAMP,
+        "space_id" SERIAL NOT NULL,
+        "name" character varying NOT NULL,
+        "type" character varying NOT NULL DEFAULT 'desk',
+        "status" character varying NOT NULL DEFAULT 'available',
+        "location" character varying,
+        CONSTRAINT "PK_space_id" PRIMARY KEY ("space_id")
+      )
+    `);
 
+    await queryRunner.query(`
+      CREATE TABLE IF NOT EXISTS "reservation" (
+        "createdAt" TIMESTAMP NOT NULL DEFAULT now(),
+        "updatedAt" TIMESTAMP NOT NULL DEFAULT now(),
+        "deletedAt" TIMESTAMP,
+        "reservation_id" SERIAL NOT NULL,
+        "start_time" TIMESTAMP NOT NULL,
+        "end_time" TIMESTAMP NOT NULL,
+        "status" "public"."reservation_status_enum" NOT NULL DEFAULT 'pending',
+        "user_id" integer,
+        "space_id" integer,
+        CONSTRAINT "PK_reservation_id" PRIMARY KEY ("reservation_id")
+      )
+    `);
+
+    await queryRunner.query(`
+      ALTER TABLE "reservation"
+      ADD CONSTRAINT "FK_reservation_user"
+      FOREIGN KEY ("user_id") REFERENCES "user"("user_id")
+      ON DELETE SET NULL ON UPDATE NO ACTION
+    `);
+
+    await queryRunner.query(`
+      ALTER TABLE "reservation"
+      ADD CONSTRAINT "FK_reservation_space"
+      FOREIGN KEY ("space_id") REFERENCES "space"("space_id")
+      ON DELETE SET NULL ON UPDATE NO ACTION
+    `);
+  }
+
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`ALTER TABLE "reservation" DROP CONSTRAINT IF EXISTS "FK_reservation_space"`);
+    await queryRunner.query(`ALTER TABLE "reservation" DROP CONSTRAINT IF EXISTS "FK_reservation_user"`);
+    await queryRunner.query(`DROP TABLE IF EXISTS "reservation"`);
+    await queryRunner.query(`DROP TABLE IF EXISTS "space"`);
+    await queryRunner.query(`DROP TYPE IF EXISTS "public"."reservation_status_enum"`);
+  }
 }
