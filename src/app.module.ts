@@ -24,6 +24,8 @@ import { UserNeedModule } from './user_need/user_need.module';
 import { EventModule } from './event/event.module';
 import { PointsLedgerModule } from './points_ledger/points_ledger.module';
 import { BadgeModule } from './badge/badge.module';
+import { CarpoolTripModule } from './carpool_trip/carpool_trip.module';
+import { VehicleModule } from './vehicle/vehicle.module';
 
 @Module({
   imports: [
@@ -66,6 +68,8 @@ import { BadgeModule } from './badge/badge.module';
     EventModule,
     PointsLedgerModule,
     BadgeModule,
+    CarpoolTripModule,
+    VehicleModule,
 
     // App Module imports other modules here
   ],

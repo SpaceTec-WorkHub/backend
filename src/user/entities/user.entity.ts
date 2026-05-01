@@ -15,6 +15,9 @@ import { UserNeed } from '../../user_need/entities/user_need.entity';
 import { Event } from '../../event/entities/event.entity';
 import { PointsLedger } from '../../points_ledger/entities/points_ledger.entity';
 import { UserBadge } from '../../badge/entities/user_badge.entity';
+import { CarpoolTrip } from '../../carpool_trip/entities/carpool_trip.entity';
+import { TripRider } from '../../carpool_trip/entities/trip_rider.entity';
+import { Vehicle } from '../../vehicle/entities/vehicle.entity';
 
 export enum UserType {
   INTERNAL = 'internal',
@@ -70,4 +73,13 @@ export class User extends BaseEntity {
 
   @OneToMany(() => UserBadge, (userBadge) => userBadge.user)
   badges!: UserBadge[];
+
+  @OneToMany(() => CarpoolTrip, (carpoolTrip) => carpoolTrip.driver)
+  driverTrips!: CarpoolTrip[];
+
+  @OneToMany(() => TripRider, (tripRider) => tripRider.user)
+  tripRiders!: TripRider[];
+
+  @OneToMany(() => Vehicle, (vehicle) => vehicle.owner)
+  vehicles!: Vehicle[];
 }
