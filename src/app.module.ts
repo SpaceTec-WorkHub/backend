@@ -26,6 +26,8 @@ import { PointsLedgerModule } from './points_ledger/points_ledger.module';
 import { BadgeModule } from './badge/badge.module';
 import { CarpoolTripModule } from './carpool_trip/carpool_trip.module';
 import { VehicleModule } from './vehicle/vehicle.module';
+import { DevSeedService } from './dev-seed.service';
+import { GamificationModule } from './gamification/gamification.module';
 
 @Module({
   imports: [
@@ -44,6 +46,7 @@ import { VehicleModule } from './vehicle/vehicle.module';
         password: config.get<string>('DB_PASSWORD'),
         database: config.get<string>('DB_NAME'),
         autoLoadEntities: true,
+        synchronize: false,
         ssl:
           process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
       }),
@@ -70,10 +73,11 @@ import { VehicleModule } from './vehicle/vehicle.module';
     BadgeModule,
     CarpoolTripModule,
     VehicleModule,
+    GamificationModule,
 
     // App Module imports other modules here
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, DevSeedService],
 })
 export class AppModule {}
