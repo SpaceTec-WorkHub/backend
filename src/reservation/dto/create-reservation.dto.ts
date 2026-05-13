@@ -1,4 +1,4 @@
-import { IsDateString, IsNotEmpty, IsNumber 	IsString,
+import { IsDateString, IsNotEmpty, IsNumber, IsString,
 	IsOptional,
 } from 'class-validator';
 
