@@ -1,7 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CreateVehicleDto } from './dto/create-vehicle.dto';
@@ -78,5 +75,22 @@ export class VehicleService {
   async remove(id: number) {
     const vehicle = await this.findOne(id);
     return this.vehicleRepository.softRemove(vehicle);
+  }
+
+  async findByOwner(owner_id: number) {
+    const vehicle = await this.vehicleRepository.findOne({
+      where: {
+        owner: {
+          user_id: owner_id,
+        },
+      },
+      relations: ['owner'],
+    });
+
+    if (!vehicle) {
+      throw new NotFoundException(`Vehicle for owner ${owner_id} not found`);
+    }
+
+    return vehicle;
   }
 }

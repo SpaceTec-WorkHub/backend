@@ -43,4 +43,9 @@ export class VehicleController {
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.vehicleService.remove(id);
   }
+
+  @Get('owner/:owner_id')
+  findByOwner(@Param('owner_id', ParseIntPipe) owner_id: number) {
+    return this.vehicleService.findByOwner(owner_id);
+  }
 }
