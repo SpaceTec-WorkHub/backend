@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddReservationCheckInOutAndIncidents1780000000000 implements MigrationInterface {
-  name = 'AddReservationCheckInOutAndIncidents1780000000000';
+export class AddReservationCheckInOutAndIncidents1777621768361 implements MigrationInterface {
+  name = 'AddReservationCheckInOutAndIncidents1777621768361';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`ALTER TABLE "reservation" ALTER COLUMN "status" DROP DEFAULT`);
