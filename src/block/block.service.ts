@@ -4,9 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { CreateBlockDto } from './dto/create-block.dto';
+import { CreateSpaceBlocksDto } from './dto/create-space-blocks.dto';
 import { UpdateBlockDto } from './dto/update-block.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Block } from './entities/block.entity';
 import { Space } from '../space/entities/space.entity';
 import { Zone } from '../zone/entities/zone.entity';
@@ -30,6 +31,88 @@ export class BlockService {
   create(createBlockDto: CreateBlockDto) {
     const newBlock = this.blockRepository.create(createBlockDto);
     return this.blockRepository.save(newBlock);
+  }
+
+  async createSpaceBlocks(createSpaceBlocksDto: CreateSpaceBlocksDto) {
+    const spaceIds = [...new Set(createSpaceBlocksDto.space_ids.map((spaceId) => Number(spaceId)))].filter(
+      (spaceId) => Number.isFinite(spaceId) && spaceId > 0,
+    );
+
+    if (spaceIds.length === 0) {
+      throw new BadRequestException('Select at least one space to block');
+    }
+
+    const spaces = await this.spaceRepository.find({
+      where: { space_id: In(spaceIds) },
+      relations: ['zone'],
+    });
+
+    if (spaces.length !== spaceIds.length) {
+      throw new BadRequestException('One or more spaces were not found');
+    }
+
+    const startTime = new Date(createSpaceBlocksDto.start_time);
+    const endTime = createSpaceBlocksDto.end_time ? new Date(createSpaceBlocksDto.end_time) : null;
+
+    if (Number.isNaN(startTime.getTime())) {
+      throw new BadRequestException('Invalid start time');
+    }
+
+    if (endTime && Number.isNaN(endTime.getTime())) {
+      throw new BadRequestException('Invalid end time');
+    }
+
+    if (endTime && endTime <= startTime) {
+      throw new BadRequestException('End time must be after start time');
+    }
+
+    const blocks = spaces.map((space) =>
+      this.blockRepository.create({
+        reason: createSpaceBlocksDto.reason,
+        start_time: startTime,
+        end_time: endTime,
+        space_id: space.space_id,
+        zone_id: null,
+      }),
+    );
+
+    const conflictingReservationsQuery = this.reservationRepository
+      .createQueryBuilder('reservation')
+      .where('reservation.space_id IN (:...spaceIds)', { spaceIds })
+      .andWhere('reservation.status NOT IN (:...excludedStatuses)', {
+        excludedStatuses: [ReservationStatus.CANCELLED, ReservationStatus.NO_SHOW],
+      })
+      .andWhere('reservation.start_time < :endTime', { endTime: endTime ?? new Date('2999-12-31T23:59:59.999Z') })
+      .andWhere(
+        `COALESCE(
+          CASE
+            WHEN reservation.status = :checkedOutStatus THEN reservation.check_out_time
+          END,
+          reservation.end_time
+        ) > :startTime`,
+        {
+          startTime,
+          checkedOutStatus: ReservationStatus.CHECKED_OUT,
+        },
+      );
+
+    const conflictingReservations = await conflictingReservationsQuery.getMany();
+
+    if (conflictingReservations.length > 0) {
+      await this.reservationRepository.save(
+        conflictingReservations.map((reservation) => ({
+          ...reservation,
+          status: ReservationStatus.CANCELLED,
+        })),
+      );
+    }
+
+    const savedBlocks = await this.blockRepository.save(blocks);
+
+    return {
+      blocks: savedBlocks,
+      cancelledReservations: conflictingReservations.length,
+    };
   }
 
   findAll() {

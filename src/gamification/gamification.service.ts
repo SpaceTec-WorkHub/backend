@@ -103,6 +103,14 @@ export class GamificationService {
     return { start, end, label };
   }
 
+  // Apply a penalty to a user's gamification score for overstaying a reservation.
+  // This is a best-effort method that callers can use; implementation may be expanded later.
+  async applyPenalty(userId: number, points: number, reservationId?: number) {
+    // Placeholder: current gamification model calculates points from events and rewards.
+    // Integrate a persistent adjustment mechanism here if you want penalties to affect leaderboard.
+    return;
+  }
+
   private getLevel(points: number) {
     const level = Math.max(1, Math.floor(points / LEVEL_STEP) + 1);
     const levelFloor = (level - 1) * LEVEL_STEP;

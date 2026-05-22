@@ -12,6 +12,7 @@ import { BlockService } from './block.service';
 import { CreateBlockDto } from './dto/create-block.dto';
 import { UpdateBlockDto } from './dto/update-block.dto';
 import { CreateEmergencyZoneBlockDto } from './dto/create-emergency-zone-block.dto';
+import { CreateSpaceBlocksDto } from './dto/create-space-blocks.dto';
 
 @Controller('block')
 export class BlockController {
@@ -20,6 +21,11 @@ export class BlockController {
   @Post()
   create(@Body() createBlockDto: CreateBlockDto) {
     return this.blockService.create(createBlockDto);
+  }
+
+  @Post('spaces')
+  createSpaceBlocks(@Body() createSpaceBlocksDto: CreateSpaceBlocksDto) {
+    return this.blockService.createSpaceBlocks(createSpaceBlocksDto);
   }
 
   @Post('emergency-zone')

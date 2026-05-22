@@ -3,6 +3,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { validate } from './env.validation';
 import { UserModule } from './user/user.module';
 import { RoleModule } from './role/role.module';
@@ -35,6 +36,7 @@ import { GamificationModule } from './gamification/gamification.module';
       isGlobal: true,
       validate,
     }),
+    ScheduleModule.forRoot(),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

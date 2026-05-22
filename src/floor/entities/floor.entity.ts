@@ -10,6 +10,11 @@ import { BaseEntity } from '../../shared/base.entity';
 import { Building } from '../../building/entities/building.entity';
 import { Zone } from '../../zone/entities/zone.entity';
 
+export enum FloorType {
+	office = 'office',
+	parking = 'parking',
+}
+
 @Entity()
 export class Floor extends BaseEntity {
 	@PrimaryGeneratedColumn({ type: 'integer' })
@@ -20,6 +25,9 @@ export class Floor extends BaseEntity {
 
 	@Column({ type: 'integer' })
 	building_id!: number;
+
+	@Column({ type: 'enum', enum: FloorType, default: FloorType.office })
+	floor_type!: FloorType;
 
 	@ManyToOne(() => Building, (building) => building.floors)
 	@JoinColumn({ name: 'building_id' })

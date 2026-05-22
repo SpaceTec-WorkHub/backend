@@ -12,5 +12,6 @@ import { GamificationReward } from './entities/gamification-reward.entity';
   imports: [TypeOrmModule.forFeature([Reservation, SpaceUserUsage, Release, User, GamificationReward])],
   controllers: [GamificationController],
   providers: [GamificationService],
+  exports: [GamificationService],
 })
 export class GamificationModule {}

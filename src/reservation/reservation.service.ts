@@ -3,20 +3,28 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { UpdateReservationDto } from './dto/update-reservation.dto';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, IsNull, LessThanOrEqual, Repository } from 'typeorm';
 import { Reservation, ReservationStatus } from './entities/reservation.entity';
 import { Space, SpaceStatus } from '../space/entities/space.entity';
 import { Incident, IncidentStatus } from './entities/incident.entity';
 import { CreateSpecialEventDto } from './dto/create-special-event.dto';
 import { ReportIncidentDto } from './dto/report-incident.dto';
 import { Block } from '../block/entities/block.entity';
+import { GamificationService } from '../gamification/gamification.service';
+
+const NO_SHOW_GRACE_PERIOD_MINUTES = 20;
+const OVERSTAY_EXTENSION_MS = 60 * 60 * 1000; // 1 hour
+const OVERSTAY_PENALTY_POINTS = 10;
+const OFFICE_CLOSING_HOUR = 19; // 7 PM
 
 @Injectable()
-export class ReservationService {
+export class ReservationService implements OnModuleInit {
   constructor(
     @InjectRepository(Reservation)
     private readonly reservationRepository: Repository<Reservation>,
@@ -26,7 +34,44 @@ export class ReservationService {
     private readonly incidentRepository: Repository<Incident>,
     @InjectRepository(Block)
     private readonly blockRepository: Repository<Block>,
+    private readonly gamificationService: GamificationService,
   ) {}
+
+  async onModuleInit() {
+    console.log('[SERVER START] Processing pending reservations...');
+    // First, process any reservations that ended while server was down (attempt extension or close)
+    await this.handleEndedReservations();
+    // Then, close any orphaned reservations that are still in CHECKOUT_PENDING
+    await this.recoverOrphanedReservations();
+    console.log('[SERVER START] Reservation processing complete');
+  }
+
+  private async recoverOrphanedReservations() {
+    try {
+      const orphanedReservations = await this.reservationRepository
+        .createQueryBuilder('reservation')
+        .where('reservation.status = :status', {
+          status: ReservationStatus.CHECKOUT_PENDING,
+        })
+        .andWhere('reservation.check_out_time IS NULL')
+        .andWhere('reservation.end_time <= :now', { now: new Date() })
+        .getMany();
+
+      if (orphanedReservations.length > 0) {
+        for (const reservation of orphanedReservations) {
+          reservation.status = ReservationStatus.CHECKED_OUT;
+          reservation.check_out_time = new Date(reservation.end_time);
+          await this.reservationRepository.save(reservation);
+
+          console.log(
+            `[SERVER START RECOVERY] Closed orphaned reservation ${reservation.reservation_id} (user ${reservation.user_id})`,
+          );
+        }
+      }
+    } catch (err) {
+      console.error('[SERVER START RECOVERY ERROR]', err);
+    }
+  }
 
   private getReservationRelations() {
     return [
@@ -69,7 +114,12 @@ export class ReservationService {
     }
   }
 
-  private async assertSpaceIsNotBlocked(spaceId: number, start: Date, end: Date) {
+  private async assertSpaceIsAvailable(
+    spaceId: number,
+    start: Date,
+    end: Date,
+    reservationIdToIgnore?: number,
+  ) {
     const space = await this.spaceRepository.findOne({
       where: { space_id: spaceId },
       relations: ['zone'],
@@ -92,6 +142,61 @@ export class ReservationService {
     if (hasBlockingRecord) {
       throw new BadRequestException('This space is blocked for the selected time range');
     }
+
+    // If requested slot already started, evaluate overlap from now onwards.
+    // This allows rebooking the remainder of the slot after an early checkout.
+    const overlapStart = start < new Date() ? new Date() : start;
+
+    const overlappingReservationQuery = this.reservationRepository
+      .createQueryBuilder('reservation')
+      .where('reservation.space_id = :spaceId', { spaceId })
+      .andWhere('reservation.status NOT IN (:...excludedStatuses)', {
+        excludedStatuses: [ReservationStatus.CANCELLED, ReservationStatus.NO_SHOW],
+      })
+      .andWhere('reservation.start_time < :end', { end })
+      .andWhere(
+        `COALESCE(
+          CASE
+            WHEN reservation.status = :checkedOutStatus THEN reservation.check_out_time
+          END,
+          reservation.end_time
+        ) > :start`,
+        {
+          start: overlapStart,
+          checkedOutStatus: ReservationStatus.CHECKED_OUT,
+        },
+      );
+
+    if (reservationIdToIgnore !== undefined) {
+      overlappingReservationQuery.andWhere('reservation.reservation_id != :reservationIdToIgnore', {
+        reservationIdToIgnore,
+      });
+    }
+
+    const hasOverlappingReservation = await overlappingReservationQuery.getExists();
+
+    if (hasOverlappingReservation) {
+      throw new BadRequestException('This space already has a reservation for the selected time range');
+    }
+  }
+
+  private async markExpiredReservationsAsNoShow(now = new Date()) {
+    const noShowThreshold = new Date(now.getTime() - NO_SHOW_GRACE_PERIOD_MINUTES * 60 * 1000);
+
+    await this.reservationRepository
+      .createQueryBuilder()
+      .update(Reservation)
+      .set({
+        status: ReservationStatus.NO_SHOW,
+        no_show_at: now,
+      })
+      .where('status = :status', { status: ReservationStatus.RESERVED })
+      .andWhere('check_in_time IS NULL')
+      .andWhere('no_show_at IS NULL')
+      .andWhere('GREATEST(start_time, "createdAt") <= :noShowThreshold', {
+        noShowThreshold,
+      })
+      .execute();
   }
 
   async create(createReservationDto: CreateReservationDto) {
@@ -109,13 +214,13 @@ export class ReservationService {
       throw new BadRequestException('End time must be after start time');
     }
 
-    // Validate start time is not in the past
+    // Validate the reservation still has future time left
     const now = new Date();
-    if (startTime < now) {
-      throw new BadRequestException(`Cannot reserve for past times. Current time: ${now.toISOString()}, requested start: ${startTime.toISOString()}`);
+    if (endTime <= now) {
+      throw new BadRequestException(`Cannot reserve a time range that already ended. Current time: ${now.toISOString()}, requested end: ${endTime.toISOString()}`);
     }
 
-    await this.assertSpaceIsNotBlocked(createReservationDto.space_id, startTime, endTime);
+    await this.assertSpaceIsAvailable(createReservationDto.space_id, startTime, endTime);
 
     const newReservation = this.reservationRepository.create(
       {
@@ -144,6 +249,8 @@ export class ReservationService {
   }
 
   async findActiveReservations(userId: number | null, isAdmin: boolean) {
+    await this.markExpiredReservationsAsNoShow();
+
     const statuses = [
       ReservationStatus.RESERVED,
       ReservationStatus.CHECKED_IN,
@@ -151,16 +258,124 @@ export class ReservationService {
       ReservationStatus.INCIDENT,
     ];
 
-    return this.reservationRepository.find({
+    const query = this.reservationRepository
+      .createQueryBuilder('reservation')
+      .leftJoinAndSelect('reservation.user', 'user')
+      .leftJoinAndSelect('reservation.space', 'space')
+      .leftJoinAndSelect('space.space_type', 'spaceType')
+      .leftJoinAndSelect('space.zone', 'zone')
+      .leftJoinAndSelect('reservation.release', 'release')
+      .leftJoinAndSelect('reservation.event', 'event')
+      .leftJoinAndSelect('reservation.checkEvents', 'checkEvents')
+      .leftJoinAndSelect('reservation.incidents', 'incidents')
+      .where('reservation.status IN (:...statuses)', { statuses })
+      .andWhere('reservation.end_time > CURRENT_TIMESTAMP')
+      .orderBy('ABS(EXTRACT(EPOCH FROM (reservation.start_time - CURRENT_TIMESTAMP)))', 'ASC')
+      .addOrderBy('reservation.start_time', 'ASC');
+
+    if (!isAdmin) {
+      query.andWhere('reservation.user_id = :userId', { userId: userId ?? -1 });
+    }
+
+    return query.getMany();
+  }
+
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async syncNoShowReservations() {
+    await this.markExpiredReservationsAsNoShow();
+  }
+
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async syncEndOfReservations() {
+    await this.handleEndedReservations();
+  }
+
+  @Cron('0 19-23 * * *') // Every hour from 7 PM to 11 PM, as a safety measure
+  async syncOfficeClosing() {
+    await this.handleOfficeClosing();
+  }
+
+  private async handleEndedReservations(now = new Date()) {
+    const endedReservations = await this.reservationRepository.find({
       where: {
-        status: In(statuses),
-        ...(isAdmin ? {} : { user_id: userId ?? -1 }),
+        status: In([ReservationStatus.RESERVED, ReservationStatus.CHECKED_IN]),
+        check_out_time: IsNull(),
+        end_time: LessThanOrEqual(now),
       },
-      relations: this.getReservationRelations(),
-      order: {
-        start_time: 'DESC',
-      },
+      relations: ['user'],
     });
+
+    for (const reservation of endedReservations) {
+      try {
+        const proposedStart = new Date(reservation.end_time);
+        const proposedEnd = new Date(proposedStart.getTime() + OVERSTAY_EXTENSION_MS);
+
+        // If the space is available for an extra hour, apply extension and penalty
+        await this.assertSpaceIsAvailable(reservation.space_id, proposedStart, proposedEnd, reservation.reservation_id);
+
+        reservation.end_time = proposedEnd;
+        reservation.status = ReservationStatus.CHECKOUT_PENDING;
+
+        await this.reservationRepository.save(reservation);
+
+        try {
+          await this.gamificationService.applyPenalty?.(reservation.user_id, OVERSTAY_PENALTY_POINTS, reservation.reservation_id);
+        } catch (err) {
+          // Log and continue; penalty is best-effort
+        }
+      } catch (err) {
+        // Could not extend due to overlap/block; finalize as checked out
+        reservation.status = ReservationStatus.CHECKED_OUT;
+        reservation.check_out_time = new Date(reservation.end_time);
+        await this.reservationRepository.save(reservation);
+      }
+    }
+  }
+
+  private async handleOfficeClosing(now = new Date()) {
+    // Calculate today's boundaries (00:00 to 23:59)
+    const today = new Date(now);
+    today.setHours(0, 0, 0, 0);
+    
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const closingTime = new Date(now);
+    closingTime.setHours(OFFICE_CLOSING_HOUR, 0, 0, 0);
+
+    // Get all active reservations that started today and haven't been checked out yet
+    const activeReservations = await this.reservationRepository
+      .createQueryBuilder('reservation')
+      .where('reservation.status IN (:...statuses)', {
+        statuses: [
+          ReservationStatus.RESERVED,
+          ReservationStatus.CHECKED_IN,
+          ReservationStatus.CHECKOUT_PENDING,
+        ],
+      })
+      .andWhere('reservation.check_out_time IS NULL')
+      .andWhere('reservation.start_time >= :today', { today })
+      .andWhere('reservation.start_time < :tomorrow', { tomorrow })
+      .leftJoinAndSelect('reservation.user', 'user')
+      .getMany();
+
+    for (const reservation of activeReservations) {
+      try {
+        reservation.status = ReservationStatus.CHECKED_OUT;
+        reservation.check_out_time = closingTime;
+        
+        await this.reservationRepository.save(reservation);
+
+        console.log(
+          `[OFFICE CLOSING] Reservation ${reservation.reservation_id} for user ${reservation.user_id} closed at office closing time (${closingTime.toISOString()})`,
+        );
+      } catch (err) {
+        console.error(
+          `[OFFICE CLOSING ERROR] Failed to close reservation ${reservation.reservation_id}:`,
+          err,
+        );
+      }
+    }
   }
 
   async findReservationHistory(userId: number | null, isAdmin: boolean) {
@@ -217,6 +432,10 @@ export class ReservationService {
       throw new BadRequestException('End time must be after start time');
     }
 
+    // Same overlap rule as reservation creation: for in-progress slots, compute
+    // availability from current time to avoid blocking due to past occupied minutes.
+    const overlapStart = start < new Date() ? new Date() : start;
+
     const spaces = await this.spaceRepository.find({
       where: { status: SpaceStatus.AVAILABLE },
       relations: ['space_type', 'zone'],
@@ -232,7 +451,18 @@ export class ReservationService {
         excludedStatuses: [ReservationStatus.CANCELLED, ReservationStatus.NO_SHOW],
       })
       .andWhere('reservation.start_time < :end', { end })
-      .andWhere('reservation.end_time > :start', { start })
+      .andWhere(
+        `COALESCE(
+          CASE
+            WHEN reservation.status = :checkedOutStatus THEN reservation.check_out_time
+          END,
+          reservation.end_time
+        ) > :start`,
+        {
+          start: overlapStart,
+          checkedOutStatus: ReservationStatus.CHECKED_OUT,
+        },
+      )
       .getRawMany<{ space_id: number }>();
 
     const occupiedIds = new Set(overlappingReservations.map((item) => Number(item.space_id)));
@@ -343,9 +573,16 @@ export class ReservationService {
 
     const parsedEnd = new Date(newEndTime);
 
-    if (Number.isNaN(parsedEnd.getTime()) || parsedEnd <= new Date(reservation.start_time)) {
+    if (Number.isNaN(parsedEnd.getTime()) || parsedEnd <= new Date(reservation.start_time) || parsedEnd <= new Date()) {
       throw new BadRequestException('Invalid new end time');
     }
+
+    await this.assertSpaceIsAvailable(
+      reservation.space_id,
+      new Date(reservation.start_time),
+      parsedEnd,
+      reservation.reservation_id,
+    );
 
     reservation.end_time = parsedEnd;
     return this.reservationRepository.save(reservation);
