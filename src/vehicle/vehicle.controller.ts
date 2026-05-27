@@ -31,6 +31,11 @@ export class VehicleController {
     return this.vehicleService.findOne(id);
   }
 
+  @Get('owner/:owner_id')
+  findByOwner(@Param('owner_id', ParseIntPipe) owner_id: number) {
+    return this.vehicleService.findByOwner(owner_id);
+  }
+
   @Patch(':id')
   update(
     @Param('id', ParseIntPipe) id: number,
@@ -42,10 +47,5 @@ export class VehicleController {
   @Delete(':id')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.vehicleService.remove(id);
-  }
-
-  @Get('owner/:owner_id')
-  findByOwner(@Param('owner_id', ParseIntPipe) owner_id: number) {
-    return this.vehicleService.findByOwner(owner_id);
   }
 }

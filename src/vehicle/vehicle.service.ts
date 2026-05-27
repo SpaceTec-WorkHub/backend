@@ -78,19 +78,20 @@ export class VehicleService {
   }
 
   async findByOwner(owner_id: number) {
-    const vehicle = await this.vehicleRepository.findOne({
+    const vehicles = await this.vehicleRepository.find({
       where: {
         owner: {
           user_id: owner_id,
         },
       },
-      relations: ['owner'],
+      relations: ['owner', 'trips'],
+      order: { createdAt: 'DESC' },
     });
 
-    if (!vehicle) {
+    if (vehicles.length === 0) {
       throw new NotFoundException(`Vehicle for owner ${owner_id} not found`);
     }
 
-    return vehicle;
+    return vehicles;
   }
 }

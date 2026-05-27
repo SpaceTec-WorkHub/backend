@@ -6,10 +6,12 @@ import {
   Patch,
   Param,
   Delete,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { UserService } from './user.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 @Controller('users')
 export class UserController {
@@ -38,5 +40,21 @@ export class UserController {
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.userService.remove(+id);
+  }
+
+  @Post(':id/password/verify')
+  verifyPassword(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: Pick<ChangePasswordDto, 'current_password'>,
+  ) {
+    return this.userService.verifyPassword(id, body.current_password);
+  }
+
+  @Patch(':id/password')
+  changePassword(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() changePasswordDto: ChangePasswordDto,
+  ) {
+    return this.userService.changePassword(id, changePasswordDto);
   }
 }
