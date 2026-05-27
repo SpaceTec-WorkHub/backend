@@ -6,6 +6,7 @@ import { Block } from './entities/block.entity';
 import { Space } from '../space/entities/space.entity';
 import { Zone } from '../zone/entities/zone.entity';
 import { Reservation } from '../reservation/entities/reservation.entity';
+import { NotificationsService } from '../notifications/notifications.service';
 
 describe('BlockService', () => {
   let service: BlockService;
@@ -26,6 +27,9 @@ describe('BlockService', () => {
   let reservationRepository: {
     createQueryBuilder: jest.Mock;
     save: jest.Mock;
+  };
+  let notificationsService: {
+    create: jest.Mock;
   };
   let reservationQueryBuilder: {
     where: jest.Mock;
@@ -62,6 +66,10 @@ describe('BlockService', () => {
       save: jest.fn(async (value) => value),
     };
 
+    notificationsService = {
+      create: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BlockService,
@@ -69,6 +77,7 @@ describe('BlockService', () => {
         { provide: getRepositoryToken(Space), useValue: spaceRepository },
         { provide: getRepositoryToken(Zone), useValue: zoneRepository },
         { provide: getRepositoryToken(Reservation), useValue: reservationRepository },
+        { provide: NotificationsService, useValue: notificationsService },
       ],
     }).compile();
 

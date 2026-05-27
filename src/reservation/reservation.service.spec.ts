@@ -7,6 +7,7 @@ import { Space } from '../space/entities/space.entity';
 import { Incident } from './entities/incident.entity';
 import { Block } from '../block/entities/block.entity';
 import { GamificationService } from '../gamification/gamification.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 describe('ReservationService', () => {
   let service: ReservationService;
@@ -28,6 +29,9 @@ describe('ReservationService', () => {
   };
   let blockRepository: {
     createQueryBuilder: jest.Mock;
+  };
+  let notificationsService: {
+    create: jest.Mock;
   };
   let reservationQueryBuilder: {
     update: jest.Mock;
@@ -104,6 +108,10 @@ describe('ReservationService', () => {
     blockRepository = {
       createQueryBuilder: jest.fn(() => blockQueryBuilder),
     };
+
+    notificationsService = {
+      create: jest.fn(),
+    };
   });
 
   afterEach(() => {
@@ -122,6 +130,7 @@ describe('ReservationService', () => {
         { provide: getRepositoryToken(Incident), useValue: incidentRepository },
         { provide: getRepositoryToken(Block), useValue: blockRepository },
         { provide: GamificationService, useValue: { applyPenalty: jest.fn() } },
+        { provide: NotificationsService, useValue: notificationsService },
       ],
     }).compile();
 
@@ -229,40 +238,36 @@ describe('ReservationService', () => {
   });
 
   it('filters active reservations by current time cutoff', async () => {
-    reservationQueryBuilder.execute.mockResolvedValue({ affected: 0 });
     reservationQueryBuilder.getMany.mockResolvedValue([]);
 
-    await service.findActiveReservations(7, false);
+    await service.syncNoShowReservations();
 
-    expect(reservationQueryBuilder.update).toHaveBeenCalled();
+    expect(reservationQueryBuilder.getMany).toHaveBeenCalled();
     expect(reservationQueryBuilder.andWhere).toHaveBeenCalledWith(
       'GREATEST(start_time, "createdAt") <= :noShowThreshold',
       expect.objectContaining({ noShowThreshold: expect.any(Date) }),
     );
-    expect(reservationQueryBuilder.andWhere).toHaveBeenCalledWith(
-      'reservation.end_time > CURRENT_TIMESTAMP',
-    );
-    expect(reservationQueryBuilder.orderBy).toHaveBeenCalledWith(
-      'ABS(EXTRACT(EPOCH FROM (reservation.start_time - CURRENT_TIMESTAMP)))',
-      'ASC',
-    );
   });
 
   it('marks past due reserved reservations as no show', async () => {
-    reservationQueryBuilder.execute.mockResolvedValue({ affected: 1 });
+    reservationQueryBuilder.getMany.mockResolvedValue([
+      { reservation_id: 5, user_id: 7, event_id: null, status: 'reserved', no_show_at: null },
+    ]);
 
     await service.syncNoShowReservations();
 
-    expect(reservationQueryBuilder.update).toHaveBeenCalled();
-    expect(reservationQueryBuilder.set).toHaveBeenCalledWith(
+    expect(reservationQueryBuilder.getMany).toHaveBeenCalled();
+    expect(reservationRepository.save).toHaveBeenCalledWith(
       expect.objectContaining({
         status: 'no_show',
         no_show_at: expect.any(Date),
       }),
     );
-    expect(reservationQueryBuilder.andWhere).toHaveBeenCalledWith(
-      'GREATEST(start_time, "createdAt") <= :noShowThreshold',
-      expect.objectContaining({ noShowThreshold: expect.any(Date) }),
+    expect(notificationsService.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_id: 7,
+        reason: 'no_show',
+      }),
     );
   });
 

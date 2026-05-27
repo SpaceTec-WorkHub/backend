@@ -6,9 +6,10 @@ import { Block } from './entities/block.entity';
 import { Space } from '../space/entities/space.entity';
 import { Zone } from '../zone/entities/zone.entity';
 import { Reservation } from '../reservation/entities/reservation.entity';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Block, Space, Zone, Reservation])],
+  imports: [TypeOrmModule.forFeature([Block, Space, Zone, Reservation]), NotificationsModule],
   controllers: [BlockController],
   providers: [BlockService],
   exports: [BlockService],

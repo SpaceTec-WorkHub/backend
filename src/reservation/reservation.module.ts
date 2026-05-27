@@ -7,9 +7,10 @@ import { Incident } from './entities/incident.entity';
 import { Space } from '../space/entities/space.entity';
 import { Block } from '../block/entities/block.entity';
 import { GamificationModule } from '../gamification/gamification.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Reservation, Incident, Space, Block]), GamificationModule],
+  imports: [TypeOrmModule.forFeature([Reservation, Incident, Space, Block]), GamificationModule, NotificationsModule],
   controllers: [ReservationController],
   providers: [ReservationService],
   exports: [ReservationService],

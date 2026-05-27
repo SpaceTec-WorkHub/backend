@@ -18,6 +18,7 @@ import { UserBadge } from '../../badge/entities/user_badge.entity';
 import { CarpoolTrip } from '../../carpool_trip/entities/carpool_trip.entity';
 import { TripRider } from '../../carpool_trip/entities/trip_rider.entity';
 import { Vehicle } from '../../vehicle/entities/vehicle.entity';
+import { Notification } from '../../notifications/entities/notification.entity';
 
 export enum UserType {
   INTERNAL = 'internal',
@@ -82,4 +83,7 @@ export class User extends BaseEntity {
 
   @OneToMany(() => Vehicle, (vehicle) => vehicle.owner)
   vehicles!: Vehicle[];
+
+  @OneToMany(() => Notification, (notification) => notification.user)
+  notifications!: Notification[];
 }

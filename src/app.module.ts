@@ -29,6 +29,7 @@ import { CarpoolTripModule } from './carpool_trip/carpool_trip.module';
 import { VehicleModule } from './vehicle/vehicle.module';
 import { DevSeedService } from './dev-seed.service';
 import { GamificationModule } from './gamification/gamification.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -76,6 +77,7 @@ import { GamificationModule } from './gamification/gamification.module';
     CarpoolTripModule,
     VehicleModule,
     GamificationModule,
+    NotificationsModule,
 
     // App Module imports other modules here
   ],

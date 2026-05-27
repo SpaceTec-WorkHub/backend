@@ -14,6 +14,8 @@ import { Zone } from '../zone/entities/zone.entity';
 import { Reservation } from '../reservation/entities/reservation.entity';
 import { CreateEmergencyZoneBlockDto } from './dto/create-emergency-zone-block.dto';
 import { ReservationStatus } from '../reservation/entities/reservation.entity';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationReason } from '../notifications/entities/notification.entity';
 
 @Injectable()
 export class BlockService {
@@ -26,7 +28,24 @@ export class BlockService {
     private readonly zoneRepository: Repository<Zone>,
     @InjectRepository(Reservation)
     private readonly reservationRepository: Repository<Reservation>,
+    private readonly notificationsService: NotificationsService,
   ) {}
+
+  private async notifyCancelledReservation(
+    reservation: Reservation,
+    content: string,
+  ) {
+    try {
+      await this.notificationsService.create({
+        user_id: reservation.user_id,
+        reason: NotificationReason.RESERVATION_CANCELLED_BY_BLOCK,
+        title: 'Reservación cancelada por bloqueo',
+        content,
+      });
+    } catch (error) {
+      console.error('[NOTIFICATION ERROR]', error);
+    }
+  }
 
   create(createBlockDto: CreateBlockDto) {
     const newBlock = this.blockRepository.create(createBlockDto);
@@ -34,9 +53,11 @@ export class BlockService {
   }
 
   async createSpaceBlocks(createSpaceBlocksDto: CreateSpaceBlocksDto) {
-    const spaceIds = [...new Set(createSpaceBlocksDto.space_ids.map((spaceId) => Number(spaceId)))].filter(
-      (spaceId) => Number.isFinite(spaceId) && spaceId > 0,
-    );
+    const spaceIds = [
+      ...new Set(
+        createSpaceBlocksDto.space_ids.map((spaceId) => Number(spaceId)),
+      ),
+    ].filter((spaceId) => Number.isFinite(spaceId) && spaceId > 0);
 
     if (spaceIds.length === 0) {
       throw new BadRequestException('Select at least one space to block');
@@ -52,7 +73,9 @@ export class BlockService {
     }
 
     const startTime = new Date(createSpaceBlocksDto.start_time);
-    const endTime = createSpaceBlocksDto.end_time ? new Date(createSpaceBlocksDto.end_time) : null;
+    const endTime = createSpaceBlocksDto.end_time
+      ? new Date(createSpaceBlocksDto.end_time)
+      : null;
 
     if (Number.isNaN(startTime.getTime())) {
       throw new BadRequestException('Invalid start time');
@@ -80,9 +103,14 @@ export class BlockService {
       .createQueryBuilder('reservation')
       .where('reservation.space_id IN (:...spaceIds)', { spaceIds })
       .andWhere('reservation.status NOT IN (:...excludedStatuses)', {
-        excludedStatuses: [ReservationStatus.CANCELLED, ReservationStatus.NO_SHOW],
+        excludedStatuses: [
+          ReservationStatus.CANCELLED,
+          ReservationStatus.NO_SHOW,
+        ],
       })
-      .andWhere('reservation.start_time < :endTime', { endTime: endTime ?? new Date('2999-12-31T23:59:59.999Z') })
+      .andWhere('reservation.start_time < :endTime', {
+        endTime: endTime ?? new Date('2999-12-31T23:59:59.999Z'),
+      })
       .andWhere(
         `COALESCE(
           CASE
@@ -96,7 +124,8 @@ export class BlockService {
         },
       );
 
-    const conflictingReservations = await conflictingReservationsQuery.getMany();
+    const conflictingReservations =
+      await conflictingReservationsQuery.getMany();
 
     if (conflictingReservations.length > 0) {
       await this.reservationRepository.save(
@@ -105,6 +134,13 @@ export class BlockService {
           status: ReservationStatus.CANCELLED,
         })),
       );
+
+      for (const reservation of conflictingReservations) {
+        await this.notifyCancelledReservation(
+          reservation,
+          'Tu reservación fue cancelada porque un bloqueo del administrador afecta el espacio seleccionado.',
+        );
+      }
     }
 
     const savedBlocks = await this.blockRepository.save(blocks);
@@ -142,7 +178,9 @@ export class BlockService {
     return this.blockRepository.save(existingBlock);
   }
 
-  async createEmergencyZoneBlock(createEmergencyZoneBlockDto: CreateEmergencyZoneBlockDto) {
+  async createEmergencyZoneBlock(
+    createEmergencyZoneBlockDto: CreateEmergencyZoneBlockDto,
+  ) {
     const zone = await this.zoneRepository.findOne({
       where: { zone_id: createEmergencyZoneBlockDto.zone_id },
       relations: ['spaces'],
@@ -181,16 +219,22 @@ export class BlockService {
       .createQueryBuilder('reservation')
       .innerJoin('reservation.space', 'space')
       .where('space.zone_id = :zoneId', { zoneId: zone.zone_id })
-      .andWhere('reservation.status != :cancelled', { cancelled: ReservationStatus.CANCELLED })
+      .andWhere('reservation.status != :cancelled', {
+        cancelled: ReservationStatus.CANCELLED,
+      })
       .andWhere('reservation.end_time > :startTime', { startTime });
 
     if (endTime) {
-      conflictingReservationsQuery.andWhere('reservation.start_time < :endTime', {
-        endTime,
-      });
+      conflictingReservationsQuery.andWhere(
+        'reservation.start_time < :endTime',
+        {
+          endTime,
+        },
+      );
     }
 
-    const conflictingReservations = await conflictingReservationsQuery.getMany();
+    const conflictingReservations =
+      await conflictingReservationsQuery.getMany();
 
     if (conflictingReservations.length > 0) {
       await this.reservationRepository.save(
@@ -199,6 +243,13 @@ export class BlockService {
           status: ReservationStatus.CANCELLED,
         })),
       );
+
+      for (const reservation of conflictingReservations) {
+        await this.notifyCancelledReservation(
+          reservation,
+          'Tu reservación fue cancelada porque un bloqueo del administrador afecta la zona seleccionada.',
+        );
+      }
     }
 
     const savedBlock = await this.blockRepository.save(newBlock);

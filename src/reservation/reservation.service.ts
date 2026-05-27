@@ -17,6 +17,8 @@ import { CreateSpecialEventDto } from './dto/create-special-event.dto';
 import { ReportIncidentDto } from './dto/report-incident.dto';
 import { Block } from '../block/entities/block.entity';
 import { GamificationService } from '../gamification/gamification.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationReason } from '../notifications/entities/notification.entity';
 
 const NO_SHOW_GRACE_PERIOD_MINUTES = 20;
 const OVERSTAY_EXTENSION_MS = 60 * 60 * 1000; // 1 hour
@@ -35,7 +37,26 @@ export class ReservationService implements OnModuleInit {
     @InjectRepository(Block)
     private readonly blockRepository: Repository<Block>,
     private readonly gamificationService: GamificationService,
+    private readonly notificationsService: NotificationsService,
   ) {}
+
+  private async sendReservationNotification(params: {
+    userId: number;
+    reason: NotificationReason;
+    title: string;
+    content: string;
+  }) {
+    try {
+      await this.notificationsService.create({
+        user_id: params.userId,
+        reason: params.reason,
+        title: params.title,
+        content: params.content,
+      });
+    } catch (error) {
+      console.error('[NOTIFICATION ERROR]', error);
+    }
+  }
 
   async onModuleInit() {
     console.log('[SERVER START] Processing pending reservations...');
@@ -108,7 +129,11 @@ export class ReservationService implements OnModuleInit {
     return parsedLocal;
   }
 
-  private assertOwnerOrAdmin(reservation: Reservation, userId: number, isAdmin?: boolean) {
+  private assertOwnerOrAdmin(
+    reservation: Reservation,
+    userId: number,
+    isAdmin?: boolean,
+  ) {
     if (!isAdmin && reservation.user_id !== userId) {
       throw new ForbiddenException('You can only act on your own reservations');
     }
@@ -136,11 +161,15 @@ export class ReservationService implements OnModuleInit {
         zoneId: space.zone_id,
       })
       .andWhere('block.start_time < :end', { end })
-      .andWhere('(block.end_time IS NULL OR block.end_time > :start)', { start })
+      .andWhere('(block.end_time IS NULL OR block.end_time > :start)', {
+        start,
+      })
       .getExists();
 
     if (hasBlockingRecord) {
-      throw new BadRequestException('This space is blocked for the selected time range');
+      throw new BadRequestException(
+        'This space is blocked for the selected time range',
+      );
     }
 
     // If requested slot already started, evaluate overlap from now onwards.
@@ -151,7 +180,10 @@ export class ReservationService implements OnModuleInit {
       .createQueryBuilder('reservation')
       .where('reservation.space_id = :spaceId', { spaceId })
       .andWhere('reservation.status NOT IN (:...excludedStatuses)', {
-        excludedStatuses: [ReservationStatus.CANCELLED, ReservationStatus.NO_SHOW],
+        excludedStatuses: [
+          ReservationStatus.CANCELLED,
+          ReservationStatus.NO_SHOW,
+        ],
       })
       .andWhere('reservation.start_time < :end', { end })
       .andWhere(
@@ -168,35 +200,56 @@ export class ReservationService implements OnModuleInit {
       );
 
     if (reservationIdToIgnore !== undefined) {
-      overlappingReservationQuery.andWhere('reservation.reservation_id != :reservationIdToIgnore', {
-        reservationIdToIgnore,
-      });
+      overlappingReservationQuery.andWhere(
+        'reservation.reservation_id != :reservationIdToIgnore',
+        {
+          reservationIdToIgnore,
+        },
+      );
     }
 
-    const hasOverlappingReservation = await overlappingReservationQuery.getExists();
+    const hasOverlappingReservation =
+      await overlappingReservationQuery.getExists();
 
     if (hasOverlappingReservation) {
-      throw new BadRequestException('This space already has a reservation for the selected time range');
+      throw new BadRequestException(
+        'This space already has a reservation for the selected time range',
+      );
     }
   }
 
   private async markExpiredReservationsAsNoShow(now = new Date()) {
-    const noShowThreshold = new Date(now.getTime() - NO_SHOW_GRACE_PERIOD_MINUTES * 60 * 1000);
+    const noShowThreshold = new Date(
+      now.getTime() - NO_SHOW_GRACE_PERIOD_MINUTES * 60 * 1000,
+    );
 
-    await this.reservationRepository
-      .createQueryBuilder()
-      .update(Reservation)
-      .set({
-        status: ReservationStatus.NO_SHOW,
-        no_show_at: now,
+    const expiredReservations = await this.reservationRepository
+      .createQueryBuilder('reservation')
+      .where('reservation.status = :status', {
+        status: ReservationStatus.RESERVED,
       })
-      .where('status = :status', { status: ReservationStatus.RESERVED })
       .andWhere('check_in_time IS NULL')
       .andWhere('no_show_at IS NULL')
       .andWhere('GREATEST(start_time, "createdAt") <= :noShowThreshold', {
         noShowThreshold,
       })
-      .execute();
+      .getMany();
+
+    for (const reservation of expiredReservations) {
+      reservation.status = ReservationStatus.NO_SHOW;
+      reservation.no_show_at = now;
+
+      await this.reservationRepository.save(reservation);
+
+      await this.sendReservationNotification({
+        userId: reservation.user_id,
+        reason: NotificationReason.NO_SHOW,
+        title: 'Reservación marcada como no-show',
+        content: reservation.event_id
+          ? 'Tu reservación asociada a un evento fue marcada como no-show por no presentarte a tiempo.'
+          : 'Tu reservación fue marcada como no-show por no presentarte a tiempo.',
+      });
+    }
   }
 
   async create(createReservationDto: CreateReservationDto) {
@@ -206,7 +259,9 @@ export class ReservationService implements OnModuleInit {
 
     // Validate date format
     if (Number.isNaN(startTime.getTime()) || Number.isNaN(endTime.getTime())) {
-      throw new BadRequestException('Invalid date-time format. Use ISO 8601 format (YYYY-MM-DDTHH:mm:ss.sssZ)');
+      throw new BadRequestException(
+        'Invalid date-time format. Use ISO 8601 format (YYYY-MM-DDTHH:mm:ss.sssZ)',
+      );
     }
 
     // Validate end time > start time
@@ -217,26 +272,44 @@ export class ReservationService implements OnModuleInit {
     // Validate the reservation still has future time left
     const now = new Date();
     if (endTime <= now) {
-      throw new BadRequestException(`Cannot reserve a time range that already ended. Current time: ${now.toISOString()}, requested end: ${endTime.toISOString()}`);
+      throw new BadRequestException(
+        `Cannot reserve a time range that already ended. Current time: ${now.toISOString()}, requested end: ${endTime.toISOString()}`,
+      );
     }
 
-    await this.assertSpaceIsAvailable(createReservationDto.space_id, startTime, endTime);
-
-    const newReservation = this.reservationRepository.create(
-      {
-        ...createReservationDto,
-        status: ReservationStatus.RESERVED,
-        check_in_time: null,
-        check_out_time: null,
-        no_show_at: null,
-        incident_notes: null,
-        reassigned_space_id: null,
-        latitude_check_in: null,
-        longitude_check_in: null,
-      },
+    await this.assertSpaceIsAvailable(
+      createReservationDto.space_id,
+      startTime,
+      endTime,
     );
 
-    return this.reservationRepository.save(newReservation);
+    const newReservation = this.reservationRepository.create({
+      ...createReservationDto,
+      status: ReservationStatus.RESERVED,
+      check_in_time: null,
+      check_out_time: null,
+      no_show_at: null,
+      incident_notes: null,
+      reassigned_space_id: null,
+      latitude_check_in: null,
+      longitude_check_in: null,
+    });
+
+    const savedReservation =
+      await this.reservationRepository.save(newReservation);
+
+    await this.sendReservationNotification({
+      userId: savedReservation.user_id,
+      reason: NotificationReason.RESERVATION_SUCCESS,
+      title: savedReservation.event_id
+        ? 'Reserva para evento confirmada'
+        : 'Reserva confirmada',
+      content: savedReservation.event_id
+        ? 'Tu reservación vinculada a un evento fue creada correctamente.'
+        : 'Tu reservación fue creada correctamente.',
+    });
+
+    return savedReservation;
   }
 
   findAll() {
@@ -270,7 +343,10 @@ export class ReservationService implements OnModuleInit {
       .leftJoinAndSelect('reservation.incidents', 'incidents')
       .where('reservation.status IN (:...statuses)', { statuses })
       .andWhere('reservation.end_time > CURRENT_TIMESTAMP')
-      .orderBy('ABS(EXTRACT(EPOCH FROM (reservation.start_time - CURRENT_TIMESTAMP)))', 'ASC')
+      .orderBy(
+        'ABS(EXTRACT(EPOCH FROM (reservation.start_time - CURRENT_TIMESTAMP)))',
+        'ASC',
+      )
       .addOrderBy('reservation.start_time', 'ASC');
 
     if (!isAdmin) {
@@ -308,22 +384,41 @@ export class ReservationService implements OnModuleInit {
     for (const reservation of endedReservations) {
       try {
         const proposedStart = new Date(reservation.end_time);
-        const proposedEnd = new Date(proposedStart.getTime() + OVERSTAY_EXTENSION_MS);
+        const proposedEnd = new Date(
+          proposedStart.getTime() + OVERSTAY_EXTENSION_MS,
+        );
 
         // If the space is available for an extra hour, apply extension and penalty
-        await this.assertSpaceIsAvailable(reservation.space_id, proposedStart, proposedEnd, reservation.reservation_id);
+        await this.assertSpaceIsAvailable(
+          reservation.space_id,
+          proposedStart,
+          proposedEnd,
+          reservation.reservation_id,
+        );
 
         reservation.end_time = proposedEnd;
         reservation.status = ReservationStatus.CHECKOUT_PENDING;
 
         await this.reservationRepository.save(reservation);
 
+        await this.sendReservationNotification({
+          userId: reservation.user_id,
+          reason: NotificationReason.CHECKOUT_PENDING,
+          title: 'Checkout pendiente',
+          content:
+            'Tu reservación terminó y quedó en checkout pendiente. Al parecer el espacio sigue disponible, se extendió la reservación una hora más, si no la necesitas finalízala desde el checkout.',
+        });
+
         try {
-          await this.gamificationService.applyPenalty?.(reservation.user_id, OVERSTAY_PENALTY_POINTS, reservation.reservation_id);
-        } catch (err) {
+          await this.gamificationService.applyPenalty?.(
+            reservation.user_id,
+            OVERSTAY_PENALTY_POINTS,
+            reservation.reservation_id,
+          );
+        } catch {
           // Log and continue; penalty is best-effort
         }
-      } catch (err) {
+      } catch {
         // Could not extend due to overlap/block; finalize as checked out
         reservation.status = ReservationStatus.CHECKED_OUT;
         reservation.check_out_time = new Date(reservation.end_time);
@@ -336,7 +431,7 @@ export class ReservationService implements OnModuleInit {
     // Calculate today's boundaries (00:00 to 23:59)
     const today = new Date(now);
     today.setHours(0, 0, 0, 0);
-    
+
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
@@ -363,7 +458,7 @@ export class ReservationService implements OnModuleInit {
       try {
         reservation.status = ReservationStatus.CHECKED_OUT;
         reservation.check_out_time = closingTime;
-        
+
         await this.reservationRepository.save(reservation);
 
         console.log(
@@ -448,7 +543,10 @@ export class ReservationService implements OnModuleInit {
       .createQueryBuilder('reservation')
       .select('reservation.space_id', 'space_id')
       .where('reservation.status NOT IN (:...excludedStatuses)', {
-        excludedStatuses: [ReservationStatus.CANCELLED, ReservationStatus.NO_SHOW],
+        excludedStatuses: [
+          ReservationStatus.CANCELLED,
+          ReservationStatus.NO_SHOW,
+        ],
       })
       .andWhere('reservation.start_time < :end', { end })
       .andWhere(
@@ -465,14 +563,18 @@ export class ReservationService implements OnModuleInit {
       )
       .getRawMany<{ space_id: number }>();
 
-    const occupiedIds = new Set(overlappingReservations.map((item) => Number(item.space_id)));
+    const occupiedIds = new Set(
+      overlappingReservations.map((item) => Number(item.space_id)),
+    );
 
     const overlappingBlocks = await this.blockRepository
       .createQueryBuilder('block')
       .select('block.space_id', 'space_id')
       .addSelect('block.zone_id', 'zone_id')
       .where('block.start_time < :end', { end })
-      .andWhere('(block.end_time IS NULL OR block.end_time > :start)', { start })
+      .andWhere('(block.end_time IS NULL OR block.end_time > :start)', {
+        start,
+      })
       .getRawMany<{ space_id: number | null; zone_id: number | null }>();
 
     const blockedSpaceIds = new Set(
@@ -497,12 +599,20 @@ export class ReservationService implements OnModuleInit {
     );
   }
 
-  async createSpecialEventReservations(createSpecialEventDto: CreateSpecialEventDto) {
+  async createSpecialEventReservations(
+    createSpecialEventDto: CreateSpecialEventDto,
+  ) {
     const startTime = new Date(createSpecialEventDto.start_time);
     const endTime = new Date(createSpecialEventDto.end_time);
 
-    if (Number.isNaN(startTime.getTime()) || Number.isNaN(endTime.getTime()) || endTime <= startTime) {
-      throw new BadRequestException('Invalid reservation window for special event');
+    if (
+      Number.isNaN(startTime.getTime()) ||
+      Number.isNaN(endTime.getTime()) ||
+      endTime <= startTime
+    ) {
+      throw new BadRequestException(
+        'Invalid reservation window for special event',
+      );
     }
 
     const spaces = await this.spaceRepository.find({
@@ -533,6 +643,13 @@ export class ReservationService implements OnModuleInit {
       createdReservations.push(saved);
     }
 
+    await this.sendReservationNotification({
+      userId: createSpecialEventDto.user_id,
+      reason: NotificationReason.RESERVATION_SUCCESS,
+      title: 'Reservación para evento creada',
+      content: `Se crearon ${createdReservations.length} reservaciones para el evento especial "${createSpecialEventDto.title}".`,
+    });
+
     return createdReservations;
   }
 
@@ -552,7 +669,11 @@ export class ReservationService implements OnModuleInit {
     return this.reservationRepository.save(reservation);
   }
 
-  async checkOut(reservationId: number, userId: number, options?: { isAdmin?: boolean }) {
+  async checkOut(
+    reservationId: number,
+    userId: number,
+    options?: { isAdmin?: boolean },
+  ) {
     const reservation = await this.findOne(reservationId);
     this.assertOwnerOrAdmin(reservation, userId, options?.isAdmin);
 
@@ -573,7 +694,11 @@ export class ReservationService implements OnModuleInit {
 
     const parsedEnd = new Date(newEndTime);
 
-    if (Number.isNaN(parsedEnd.getTime()) || parsedEnd <= new Date(reservation.start_time) || parsedEnd <= new Date()) {
+    if (
+      Number.isNaN(parsedEnd.getTime()) ||
+      parsedEnd <= new Date(reservation.start_time) ||
+      parsedEnd <= new Date()
+    ) {
       throw new BadRequestException('Invalid new end time');
     }
 
@@ -598,8 +723,10 @@ export class ReservationService implements OnModuleInit {
     this.assertOwnerOrAdmin(reservation, userId, options?.isAdmin);
 
     reservation.status = ReservationStatus.INCIDENT;
-    reservation.incident_notes = reportIncidentDto.notes ?? reportIncidentDto.description;
-    const updatedReservation = await this.reservationRepository.save(reservation);
+    reservation.incident_notes =
+      reportIncidentDto.notes ?? reportIncidentDto.description;
+    const updatedReservation =
+      await this.reservationRepository.save(reservation);
 
     const incident = this.incidentRepository.create({
       reservation_id: reservation.reservation_id,
@@ -641,10 +768,48 @@ export class ReservationService implements OnModuleInit {
 
   async update(id: number, updateReservationDto: UpdateReservationDto) {
     const existingReservation = await this.findOne(id);
+    const previousStatus = existingReservation.status;
 
     this.reservationRepository.merge(existingReservation, updateReservationDto);
 
-    return this.reservationRepository.save(existingReservation);
+    const savedReservation =
+      await this.reservationRepository.save(existingReservation);
+
+    if (
+      updateReservationDto.status &&
+      updateReservationDto.status !== previousStatus
+    ) {
+      if (updateReservationDto.status === ReservationStatus.CANCELLED) {
+        await this.sendReservationNotification({
+          userId: savedReservation.user_id,
+          reason: NotificationReason.RESERVATION_CANCELLED,
+          title: 'Reservación cancelada',
+          content: savedReservation.event_id
+            ? 'Tu reservación asociada a un evento fue cancelada.'
+            : 'Tu reservación fue cancelada correctamente.',
+        });
+      }
+
+      if (updateReservationDto.status === ReservationStatus.CHECKOUT_PENDING) {
+        await this.sendReservationNotification({
+          userId: savedReservation.user_id,
+          reason: NotificationReason.CHECKOUT_PENDING,
+          title: 'Checkout pendiente',
+          content: 'Tu reservación quedó en checkout pendiente.',
+        });
+      }
+
+      if (updateReservationDto.status === ReservationStatus.NO_SHOW) {
+        await this.sendReservationNotification({
+          userId: savedReservation.user_id,
+          reason: NotificationReason.NO_SHOW,
+          title: 'Reservación marcada como no-show',
+          content: 'Tu reservación fue marcada como no-show.',
+        });
+      }
+    }
+
+    return savedReservation;
   }
 
   async remove(id: number) {

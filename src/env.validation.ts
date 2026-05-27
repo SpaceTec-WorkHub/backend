@@ -1,23 +1,35 @@
 import { plainToInstance } from 'class-transformer';
-import { IsNumber, IsString, Max, Min, validateSync } from 'class-validator';
+import {
+  IsBoolean,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+  validateSync,
+} from 'class-validator';
 
 class EnvironmentVariables {
   @IsString()
-  DB_HOST: string;
+  DB_HOST!: string;
 
   @IsString()
-  DB_USER: string;
+  DB_USER!: string;
 
   @IsString()
-  DB_PASSWORD: string;
+  DB_PASSWORD!: string;
 
   @IsString()
-  DB_NAME: string;
+  DB_NAME!: string;
 
   @IsNumber()
   @Min(1)
   @Max(65535)
-  DB_PORT: number;
+  DB_PORT!: number;
+
+  @IsOptional()
+  @IsBoolean()
+  RESEND_ENABLED?: boolean;
 }
 
 export function validate(config: Record<string, unknown>) {
