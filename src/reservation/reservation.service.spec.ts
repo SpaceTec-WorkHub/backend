@@ -244,9 +244,48 @@ describe('ReservationService', () => {
 
     expect(reservationQueryBuilder.getMany).toHaveBeenCalled();
     expect(reservationQueryBuilder.andWhere).toHaveBeenCalledWith(
-      'GREATEST(start_time, "createdAt") <= :noShowThreshold',
+      'reservation.start_time <= :noShowThreshold',
       expect.objectContaining({ noShowThreshold: expect.any(Date) }),
     );
+  });
+
+  it('filters spaces of the same type when the user already has an active reservation of that type', async () => {
+    spaceRepository.find.mockResolvedValue([
+      {
+        space_id: 1,
+        code: 'A-01',
+        status: 'available',
+        zone_id: 10,
+        space_type: { name: 'Desk' },
+      },
+      {
+        space_id: 2,
+        code: 'A-02',
+        status: 'available',
+        zone_id: 10,
+        space_type: { name: 'Meeting Room' },
+      },
+    ]);
+    reservationQueryBuilder.getRawMany.mockResolvedValue([]);
+    blockQueryBuilder.getRawMany.mockResolvedValue([]);
+    reservationRepository.find.mockResolvedValue([
+      {
+        start_time: new Date('2026-05-18T14:00:00.000Z'),
+        end_time: new Date('2026-05-18T15:00:00.000Z'),
+        status: 'reserved',
+        space: { space_type: { name: 'Desk' } },
+      },
+    ]);
+
+    const spaces = await service.findAvailableSpaces(
+      '2026-05-18',
+      '2026-05-18T14:00:00.000Z',
+      '2026-05-18T15:00:00.000Z',
+      7,
+    );
+
+    expect(spaces).toHaveLength(1);
+    expect(spaces[0].space_id).toBe(2);
   });
 
   it('marks past due reserved reservations as no show', async () => {

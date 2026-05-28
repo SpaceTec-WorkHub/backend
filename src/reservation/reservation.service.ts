@@ -24,6 +24,8 @@ const NO_SHOW_GRACE_PERIOD_MINUTES = 20;
 const OVERSTAY_EXTENSION_MS = 60 * 60 * 1000; // 1 hour
 const OVERSTAY_PENALTY_POINTS = 10;
 const OFFICE_CLOSING_HOUR = 19; // 7 PM
+const MONTERREY_TIME_ZONE = 'America/Monterrey';
+type SpaceTypeGroup = 'desk' | 'meeting' | 'parking' | 'other';
 
 @Injectable()
 export class ReservationService implements OnModuleInit {
@@ -55,6 +57,163 @@ export class ReservationService implements OnModuleInit {
       });
     } catch (error) {
       console.error('[NOTIFICATION ERROR]', error);
+    }
+  }
+
+  private formatReservationDateTime(value: Date | string | null | undefined) {
+    if (!value) {
+      return 'Horario no disponible';
+    }
+
+    const parsedValue = value instanceof Date ? value : new Date(value);
+
+    if (Number.isNaN(parsedValue.getTime())) {
+      return 'Horario no disponible';
+    }
+
+    return new Intl.DateTimeFormat('es-MX', {
+      dateStyle: 'short',
+      timeStyle: 'short',
+      timeZone: MONTERREY_TIME_ZONE,
+    }).format(parsedValue);
+  }
+
+  private buildReservationSummary(reservation: {
+    start_time?: Date | string | null;
+    end_time?: Date | string | null;
+    space_id?: number | null;
+    space?: { code?: string | null } | null;
+  }) {
+    const spaceLabel = reservation.space?.code
+      ? reservation.space.code
+      : reservation.space_id
+        ? `Espacio ${reservation.space_id}`
+        : 'Espacio no disponible';
+    const startLabel = this.formatReservationDateTime(reservation.start_time);
+    const endLabel = this.formatReservationDateTime(reservation.end_time);
+
+    return `Espacio: ${spaceLabel}. Horario: ${startLabel} - ${endLabel}.`;
+  }
+
+  private getSpaceTypeGroup(
+    space?: { space_type?: { name?: string | null } | null } | null,
+  ): SpaceTypeGroup {
+    const name = (space?.space_type?.name ?? '').toLowerCase();
+
+    if (name.includes('parking') || name.includes('estacionamiento')) {
+      return 'parking';
+    }
+
+    if (
+      name.includes('desk') ||
+      name.includes('escritorio') ||
+      name.includes('escritorios')
+    ) {
+      return 'desk';
+    }
+
+    if (
+      name.includes('room') ||
+      name.includes('sala') ||
+      name.includes('meeting') ||
+      name.includes('juntas')
+    ) {
+      return 'meeting';
+    }
+
+    return 'other';
+  }
+
+  private overlapsReservationWindow(
+    reservation: {
+      start_time: Date | string;
+      end_time: Date | string;
+      check_out_time?: Date | string | null;
+      status: ReservationStatus;
+    },
+    start: Date,
+    end: Date,
+  ) {
+    const reservationStart = new Date(reservation.start_time);
+    const reservationEnd =
+      reservation.status === ReservationStatus.CHECKED_OUT &&
+      reservation.check_out_time
+        ? new Date(reservation.check_out_time)
+        : new Date(reservation.end_time);
+
+    return reservationStart < end && reservationEnd > start;
+  }
+
+  private async getUserActiveReservationsWithSpace(userId: number) {
+    return this.reservationRepository.find({
+      where: {
+        user_id: userId,
+        status: In([
+          ReservationStatus.RESERVED,
+          ReservationStatus.CHECKED_IN,
+          ReservationStatus.CHECKOUT_PENDING,
+          ReservationStatus.INCIDENT,
+        ]),
+      },
+      relations: ['space', 'space.space_type'],
+      order: {
+        start_time: 'ASC',
+      },
+    });
+  }
+
+  private getReservedSpaceTypesForWindow(
+    reservations: Array<{
+      start_time: Date | string;
+      end_time: Date | string;
+      check_out_time?: Date | string | null;
+      status: ReservationStatus;
+      space: { space_type?: { name?: string | null } | null };
+    }>,
+    start: Date,
+    end: Date,
+  ) {
+    const reservedTypes = new Set<SpaceTypeGroup>();
+
+    for (const reservation of reservations) {
+      if (!this.overlapsReservationWindow(reservation, start, end)) {
+        continue;
+      }
+
+      const group = this.getSpaceTypeGroup(reservation.space);
+      if (group !== 'other') {
+        reservedTypes.add(group);
+      }
+    }
+
+    return reservedTypes;
+  }
+
+  private async assertUserDoesNotHaveConflictingSpaceTypeReservation(
+    userId: number,
+    requestedSpace: { space_type?: { name?: string | null } | null },
+    start: Date,
+    end: Date,
+  ) {
+    const requestedGroup = this.getSpaceTypeGroup(requestedSpace);
+
+    if (requestedGroup === 'other') {
+      return;
+    }
+
+    const activeReservations = await this.getUserActiveReservationsWithSpace(
+      userId,
+    );
+    const reservedTypes = this.getReservedSpaceTypesForWindow(
+      activeReservations,
+      start,
+      end,
+    );
+
+    if (reservedTypes.has(requestedGroup)) {
+      throw new BadRequestException(
+        'Ya tienes una reservación activa de este tipo en ese horario.',
+      );
     }
   }
 
@@ -225,12 +384,13 @@ export class ReservationService implements OnModuleInit {
 
     const expiredReservations = await this.reservationRepository
       .createQueryBuilder('reservation')
+      .leftJoinAndSelect('reservation.space', 'space')
       .where('reservation.status = :status', {
         status: ReservationStatus.RESERVED,
       })
       .andWhere('check_in_time IS NULL')
       .andWhere('no_show_at IS NULL')
-      .andWhere('GREATEST(start_time, "createdAt") <= :noShowThreshold', {
+      .andWhere('reservation.start_time <= :noShowThreshold', {
         noShowThreshold,
       })
       .getMany();
@@ -245,9 +405,11 @@ export class ReservationService implements OnModuleInit {
         userId: reservation.user_id,
         reason: NotificationReason.NO_SHOW,
         title: 'Reservación marcada como no-show',
-        content: reservation.event_id
-          ? 'Tu reservación asociada a un evento fue marcada como no-show por no presentarte a tiempo.'
-          : 'Tu reservación fue marcada como no-show por no presentarte a tiempo.',
+        content: `${
+          reservation.event_id
+            ? 'Tu reservación asociada a un evento fue marcada como no-show por no presentarte a tiempo.'
+            : 'Tu reservación fue marcada como no-show por no presentarte a tiempo.'
+        } ${this.buildReservationSummary(reservation)}`,
       });
     }
   }
@@ -283,6 +445,22 @@ export class ReservationService implements OnModuleInit {
       endTime,
     );
 
+    const requestedSpace = await this.spaceRepository.findOne({
+      where: { space_id: createReservationDto.space_id },
+      relations: ['space_type'],
+    });
+
+    if (!requestedSpace) {
+      throw new NotFoundException('Space not found');
+    }
+
+    await this.assertUserDoesNotHaveConflictingSpaceTypeReservation(
+      createReservationDto.user_id,
+      requestedSpace,
+      startTime,
+      endTime,
+    );
+
     const newReservation = this.reservationRepository.create({
       ...createReservationDto,
       status: ReservationStatus.RESERVED,
@@ -298,6 +476,10 @@ export class ReservationService implements OnModuleInit {
     const savedReservation =
       await this.reservationRepository.save(newReservation);
 
+    const reservedSpace = await this.spaceRepository.findOne({
+      where: { space_id: savedReservation.space_id },
+    });
+
     await this.sendReservationNotification({
       userId: savedReservation.user_id,
       reason: NotificationReason.RESERVATION_SUCCESS,
@@ -305,8 +487,22 @@ export class ReservationService implements OnModuleInit {
         ? 'Reserva para evento confirmada'
         : 'Reserva confirmada',
       content: savedReservation.event_id
-        ? 'Tu reservación vinculada a un evento fue creada correctamente.'
-        : 'Tu reservación fue creada correctamente.',
+        ? `Tu reservación vinculada a un evento fue creada correctamente. ${this.buildReservationSummary(
+            {
+              start_time: savedReservation.start_time,
+              end_time: savedReservation.end_time,
+              space_id: savedReservation.space_id,
+              space: reservedSpace,
+            },
+          )}`
+        : `Tu reservación fue creada correctamente. ${this.buildReservationSummary(
+            {
+              start_time: savedReservation.start_time,
+              end_time: savedReservation.end_time,
+              space_id: savedReservation.space_id,
+              space: reservedSpace,
+            },
+          )}`,
     });
 
     return savedReservation;
@@ -378,7 +574,7 @@ export class ReservationService implements OnModuleInit {
         check_out_time: IsNull(),
         end_time: LessThanOrEqual(now),
       },
-      relations: ['user'],
+      relations: ['user', 'space'],
     });
 
     for (const reservation of endedReservations) {
@@ -405,8 +601,7 @@ export class ReservationService implements OnModuleInit {
           userId: reservation.user_id,
           reason: NotificationReason.CHECKOUT_PENDING,
           title: 'Checkout pendiente',
-          content:
-            'Tu reservación terminó y quedó en checkout pendiente. Al parecer el espacio sigue disponible, se extendió la reservación una hora más, si no la necesitas finalízala desde el checkout.',
+          content: `Tu reservación terminó y quedó en checkout pendiente. Al parecer el espacio sigue disponible, se extendió la reservación una hora más; si no la necesitas, finalízala desde el checkout. ${this.buildReservationSummary(reservation)}`,
         });
 
         try {
@@ -519,7 +714,12 @@ export class ReservationService implements OnModuleInit {
     return slots;
   }
 
-  async findAvailableSpaces(date: string, startTime: string, endTime: string) {
+  async findAvailableSpaces(
+    date: string,
+    startTime: string,
+    endTime: string,
+    userId: number | null = null,
+  ) {
     const start = this.parseDateTime(date, startTime);
     const end = this.parseDateTime(date, endTime);
 
@@ -591,11 +791,20 @@ export class ReservationService implements OnModuleInit {
         .map((zoneId) => Number(zoneId)),
     );
 
+    const reservedSpaceTypes = userId
+      ? this.getReservedSpaceTypesForWindow(
+          await this.getUserActiveReservationsWithSpace(userId),
+          start,
+          end,
+        )
+      : new Set<SpaceTypeGroup>();
+
     return spaces.filter(
       (space) =>
         !occupiedIds.has(space.space_id) &&
         !blockedSpaceIds.has(space.space_id) &&
-        !blockedZoneIds.has(space.zone_id),
+        !blockedZoneIds.has(space.zone_id) &&
+        !reservedSpaceTypes.has(this.getSpaceTypeGroup(space)),
     );
   }
 
@@ -784,9 +993,11 @@ export class ReservationService implements OnModuleInit {
           userId: savedReservation.user_id,
           reason: NotificationReason.RESERVATION_CANCELLED,
           title: 'Reservación cancelada',
-          content: savedReservation.event_id
-            ? 'Tu reservación asociada a un evento fue cancelada.'
-            : 'Tu reservación fue cancelada correctamente.',
+          content: `${
+            savedReservation.event_id
+              ? 'Tu reservación asociada a un evento fue cancelada.'
+              : 'Tu reservación fue cancelada correctamente.'
+          } ${this.buildReservationSummary(savedReservation)}`,
         });
       }
 
@@ -795,7 +1006,7 @@ export class ReservationService implements OnModuleInit {
           userId: savedReservation.user_id,
           reason: NotificationReason.CHECKOUT_PENDING,
           title: 'Checkout pendiente',
-          content: 'Tu reservación quedó en checkout pendiente.',
+          content: `Tu reservación quedó en checkout pendiente. ${this.buildReservationSummary(savedReservation)}`,
         });
       }
 
@@ -804,7 +1015,7 @@ export class ReservationService implements OnModuleInit {
           userId: savedReservation.user_id,
           reason: NotificationReason.NO_SHOW,
           title: 'Reservación marcada como no-show',
-          content: 'Tu reservación fue marcada como no-show.',
+          content: `Tu reservación fue marcada como no-show. ${this.buildReservationSummary(savedReservation)}`,
         });
       }
     }

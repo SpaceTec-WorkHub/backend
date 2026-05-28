@@ -64,8 +64,14 @@ export class ReservationController {
     @Query('date') date: string,
     @Query('start_time') startTime: string,
     @Query('end_time') endTime: string,
+    @Query('user_id') userId?: string,
   ) {
-    return this.reservationService.findAvailableSpaces(date, startTime, endTime);
+    return this.reservationService.findAvailableSpaces(
+      date,
+      startTime,
+      endTime,
+      userId ? Number(userId) : null,
+    );
   }
 
   @Post('admin/special-event')

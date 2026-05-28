@@ -23,6 +23,13 @@ export class NotificationsService {
   ) {}
 
   private getResendClient() {
+    const resendEnabled =
+      this.configService.get<string>('RESEND_ENABLED') === 'true';
+
+    if (!resendEnabled) {
+      return null;
+    }
+
     const apiKey = this.configService.get<string>('RESEND_API_KEY');
 
     if (!apiKey) {
@@ -37,6 +44,21 @@ export class NotificationsService {
       this.configService.get<string>('RESEND_FROM_EMAIL') ??
       'WorkHub <onboarding@resend.dev>'
     );
+  }
+
+  private formatNotificationTime(createdAt: Date) {
+    return new Intl.DateTimeFormat('es-MX', {
+      dateStyle: 'short',
+      timeStyle: 'medium',
+      timeZone: 'America/Monterrey',
+    }).format(createdAt);
+  }
+
+  private mapNotificationResponse(notification: Notification) {
+    return {
+      ...notification,
+      time: this.formatNotificationTime(notification.createdAt),
+    };
   }
 
   private escapeHtml(value: string) {
@@ -66,6 +88,13 @@ export class NotificationsService {
   }
 
   private async sendEmail(notification: Notification, user: User) {
+    const resendEnabled =
+      this.configService.get<string>('RESEND_ENABLED') === 'true';
+
+    if (!resendEnabled) {
+      return null;
+    }
+
     if (!user.email) {
       throw new BadRequestException('User does not have an email configured');
     }
@@ -117,8 +146,7 @@ export class NotificationsService {
     notification.content = createNotificationDto.content;
     notification.reason = createNotificationDto.reason;
 
-    const savedNotification =
-      await this.notificationRepository.save(notification);
+    const savedNotification = await this.notificationRepository.save(notification);
 
     try {
       await this.sendEmail(savedNotification, user);
@@ -126,26 +154,40 @@ export class NotificationsService {
       console.error('Failed to send notification email', error);
     }
 
-    return savedNotification;
+    return this.mapNotificationResponse(savedNotification);
   }
 
   findAll() {
-    return this.notificationRepository.find({
-      relations: ['user'],
-      order: { createdAt: 'DESC' },
-    });
+    return this.notificationRepository
+      .find({
+        relations: ['user'],
+        order: { createdAt: 'DESC' },
+      })
+      .then((notifications) =>
+        notifications.map((notification) =>
+          this.mapNotificationResponse(notification),
+        ),
+      );
   }
 
   findByUser(userId: number) {
-    return this.notificationRepository.find({
-      where: { user: { user_id: userId } },
-      relations: ['user'],
-      order: { createdAt: 'DESC' },
-    });
+    return this.notificationRepository
+      .find({
+        where: { user: { user_id: userId } },
+        relations: ['user'],
+        order: { createdAt: 'DESC' },
+      })
+      .then((notifications) =>
+        notifications.map((notification) =>
+          this.mapNotificationResponse(notification),
+        ),
+      );
   }
 
   async findOne(id: number) {
-    return this.getNotificationOrFail(id);
+    const notification = await this.getNotificationOrFail(id);
+
+    return this.mapNotificationResponse(notification);
   }
 
   async update(id: number, updateNotificationDto: UpdateNotificationDto) {
@@ -168,7 +210,9 @@ export class NotificationsService {
       notification.content = content;
     }
 
-    return this.notificationRepository.save(notification);
+    const savedNotification = await this.notificationRepository.save(notification);
+
+    return this.mapNotificationResponse(savedNotification);
   }
 
   async remove(id: number) {
@@ -176,6 +220,6 @@ export class NotificationsService {
 
     await this.notificationRepository.softRemove(notification);
 
-    return notification;
+    return this.mapNotificationResponse(notification);
   }
 }
