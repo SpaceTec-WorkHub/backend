@@ -39,6 +39,11 @@ export class EventController {
     return this.eventService.update(id, updateEventDto);
   }
 
+  @Patch(':id/cancel')
+  cancel(@Param('id', ParseIntPipe) id: number) {
+    return this.eventService.cancel(id);
+  }
+
   @Delete(':id')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.eventService.remove(id);

@@ -19,6 +19,7 @@ import { Block } from '../block/entities/block.entity';
 import { GamificationService } from '../gamification/gamification.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationReason } from '../notifications/entities/notification.entity';
+import { Event, EventStatus } from '../event/entities/event.entity';
 
 const NO_SHOW_GRACE_PERIOD_MINUTES = 20;
 const OVERSTAY_EXTENSION_MS = 60 * 60 * 1000; // 1 hour
@@ -38,6 +39,8 @@ export class ReservationService implements OnModuleInit {
     private readonly incidentRepository: Repository<Incident>,
     @InjectRepository(Block)
     private readonly blockRepository: Repository<Block>,
+    @InjectRepository(Event)
+    private readonly eventRepository: Repository<Event>,
     private readonly gamificationService: GamificationService,
     private readonly notificationsService: NotificationsService,
   ) {}
@@ -201,9 +204,8 @@ export class ReservationService implements OnModuleInit {
       return;
     }
 
-    const activeReservations = await this.getUserActiveReservationsWithSpace(
-      userId,
-    );
+    const activeReservations =
+      await this.getUserActiveReservationsWithSpace(userId);
     const reservedTypes = this.getReservedSpaceTypesForWindow(
       activeReservations,
       start,
@@ -834,6 +836,78 @@ export class ReservationService implements OnModuleInit {
       },
     });
 
+    const zoneSpace = await this.spaceRepository.findOne({
+      where: {
+        zone_id: createSpecialEventDto.zone_id,
+      },
+      relations: ['zone'],
+    });
+
+    const eventLocation =
+      zoneSpace?.zone?.name ?? `Zona ${createSpecialEventDto.zone_id}`;
+    const eventUserNeedId = Number(createSpecialEventDto.user_need_id);
+
+    const savedEvent = await this.eventRepository.save(
+      this.eventRepository.create({
+        title: createSpecialEventDto.title,
+        description: 'Evento especial creado desde el panel administrativo',
+        location: eventLocation,
+        start_time: startTime,
+        end_time: endTime,
+        expected_attendees: spaces.length,
+        status: EventStatus.PLANNED,
+        user_need_id: eventUserNeedId,
+        created_by: createSpecialEventDto.user_id,
+      }),
+    );
+
+    const conflictingReservations = await this.reservationRepository
+      .createQueryBuilder('reservation')
+      .innerJoinAndSelect('reservation.space', 'space')
+      .where('space.zone_id = :zoneId', {
+        zoneId: createSpecialEventDto.zone_id,
+      })
+      .andWhere('reservation.status NOT IN (:...excludedStatuses)', {
+        excludedStatuses: [
+          ReservationStatus.CANCELLED,
+          ReservationStatus.NO_SHOW,
+        ],
+      })
+      .andWhere('reservation.start_time < :endTime', {
+        endTime,
+      })
+      .andWhere(
+        `COALESCE(
+          CASE
+            WHEN reservation.status = :checkedOutStatus THEN reservation.check_out_time
+          END,
+          reservation.end_time
+        ) > :startTime`,
+        {
+          startTime,
+          checkedOutStatus: ReservationStatus.CHECKED_OUT,
+        },
+      )
+      .getMany();
+
+    if (conflictingReservations.length > 0) {
+      await this.reservationRepository.save(
+        conflictingReservations.map((reservation) => ({
+          ...reservation,
+          status: ReservationStatus.CANCELLED,
+        })),
+      );
+
+      for (const reservation of conflictingReservations) {
+        await this.sendReservationNotification({
+          userId: reservation.user_id,
+          reason: NotificationReason.RESERVATION_CANCELLED,
+          title: 'Reservación cancelada por evento especial',
+          content: `${this.buildReservationSummary(reservation)} Tu reservación fue cancelada porque se creó un evento especial en la zona.`,
+        });
+      }
+    }
+
     const createdReservations: Reservation[] = [];
 
     for (let index = 0; index < spaces.length; index += 1) {
@@ -845,6 +919,7 @@ export class ReservationService implements OnModuleInit {
         code,
         user_id: createSpecialEventDto.user_id,
         space_id: space.space_id,
+        event_id: savedEvent.event_id,
         status: ReservationStatus.RESERVED,
       });
 
@@ -859,7 +934,17 @@ export class ReservationService implements OnModuleInit {
       content: `Se crearon ${createdReservations.length} reservaciones para el evento especial "${createSpecialEventDto.title}".`,
     });
 
-    return createdReservations;
+    return {
+      event: {
+        event_id: savedEvent.event_id,
+        title: savedEvent.title,
+      },
+      title: createSpecialEventDto.title,
+      zone_id: createSpecialEventDto.zone_id,
+      createdReservations: createdReservations.length,
+      cancelledReservations: conflictingReservations.length,
+      blockedSpaces: spaces.length,
+    };
   }
 
   async checkIn(

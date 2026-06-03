@@ -22,11 +22,14 @@ export class NotificationsService {
     private readonly configService: ConfigService,
   ) {}
 
-  private getResendClient() {
-    const resendEnabled =
-      this.configService.get<string>('RESEND_ENABLED') === 'true';
+  private isResendEnabled() {
+    const value = this.configService.get<boolean | string>('RESEND_ENABLED');
 
-    if (!resendEnabled) {
+    return value === true || value === 'true';
+  }
+
+  private getResendClient() {
+    if (!this.isResendEnabled()) {
       return null;
     }
 
@@ -88,10 +91,7 @@ export class NotificationsService {
   }
 
   private async sendEmail(notification: Notification, user: User) {
-    const resendEnabled =
-      this.configService.get<string>('RESEND_ENABLED') === 'true';
-
-    if (!resendEnabled) {
+    if (!this.isResendEnabled()) {
       return null;
     }
 

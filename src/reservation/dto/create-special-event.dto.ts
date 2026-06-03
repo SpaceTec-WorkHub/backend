@@ -20,4 +20,8 @@ export class CreateSpecialEventDto {
   @IsNumber()
   @IsNotEmpty()
   user_id!: number;
+
+  @IsNumber()
+  @IsNotEmpty()
+  user_need_id!: number;
 }
