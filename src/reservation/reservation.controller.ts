@@ -91,6 +91,18 @@ export class ReservationController {
     });
   }
 
+  @Post(':id/check-in-event')
+  checkInEvent(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() checkInReservationDto: CheckInReservationDto,
+  ) {
+    return this.reservationService.checkInEvent(id, checkInReservationDto.user_id, {
+      latitude: checkInReservationDto.latitude,
+      longitude: checkInReservationDto.longitude,
+      isAdmin: checkInReservationDto.is_admin ?? false,
+    });
+  }
+
   @Post(':id/check-out')
   checkOut(
     @Param('id', ParseIntPipe) id: number,

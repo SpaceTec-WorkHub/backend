@@ -14,6 +14,7 @@ import { Release } from '../../release/entities/release.entity';
 import { CheckEvent } from '../../check_event/entities/check_event.entity';
 import { Event } from '../../event/entities/event.entity';
 import { Incident } from './incident.entity';
+import { Guest } from './guest.entity';
 
 export enum ReservationStatus {
   RESERVED = 'reserved',
@@ -76,6 +77,12 @@ export class Reservation extends BaseEntity {
   @Column({ type: 'integer', nullable: true })
   event_id?: number;
 
+  @Column({ type: 'integer', nullable: true })
+  parent_reservation_id?: number | null;
+
+  @Column({ type: 'boolean', default: false })
+  is_guest_reservation!: boolean;
+
   @ManyToOne(() => User, (user) => user.reservations)
   @JoinColumn({ name: 'user_id' })
   user!: User;
@@ -100,4 +107,14 @@ export class Reservation extends BaseEntity {
 
   @OneToMany(() => Incident, (incident) => incident.reservation)
   incidents!: Incident[];
+
+  @OneToMany(() => Reservation, (reservation) => reservation.parent_reservation)
+  extra_reservations?: Reservation[];
+
+  @ManyToOne(() => Reservation, (reservation) => reservation.extra_reservations, { nullable: true })
+  @JoinColumn({ name: 'parent_reservation_id' })
+  parent_reservation?: Reservation | null;
+
+  @OneToMany(() => Guest, (guest) => guest.reservation)
+  guests?: Guest[];
 }

@@ -28,6 +28,15 @@ export class CarpoolTrip extends BaseEntity {
   @Column({ type: 'timestamp' })
   trip_date!: Date;
 
+  @Column({ type: 'timestamp', nullable: true })
+  departure_time?: Date;
+
+  @Column({ type: 'timestamp', nullable: true })
+  meeting_point_confirmed_at?: Date;
+
+  @Column({ type: 'text', nullable: true })
+  cancellation_reason?: string;
+
   @Column({
     type: 'enum',
     enum: CarpoolTripStatus,
@@ -46,6 +55,9 @@ export class CarpoolTrip extends BaseEntity {
 
   @Column({ type: 'varchar' })
   destination!: string;
+
+  @Column({ type: 'varchar', nullable: true })
+  meeting_point?: string;
 
   @Column({ type: 'text', nullable: true })
   notes?: string;

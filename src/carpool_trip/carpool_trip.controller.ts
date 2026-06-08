@@ -26,6 +26,11 @@ export class CarpoolTripController {
     return this.carpoolTripService.findAll();
   }
 
+  @Get('driver/:driverId')
+  findByDriver(@Param('driverId', ParseIntPipe) driverId: number) {
+    return this.carpoolTripService.findByDriver(driverId);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.carpoolTripService.findOne(id);
@@ -58,5 +63,56 @@ export class CarpoolTripController {
     @Param('userId', ParseIntPipe) userId: number,
   ) {
     return this.carpoolTripService.removeRider(tripId, userId);
+  }
+
+  @Patch(':tripId/riders/:userId/accept')
+  acceptRider(
+    @Param('tripId', ParseIntPipe) tripId: number,
+    @Param('userId', ParseIntPipe) userId: number,
+    @Body('driverId', ParseIntPipe) driverId: number,
+  ) {
+    return this.carpoolTripService.acceptRider(tripId, userId, driverId);
+  }
+
+  @Patch(':tripId/riders/:userId/reject')
+  rejectRider(
+    @Param('tripId', ParseIntPipe) tripId: number,
+    @Param('userId', ParseIntPipe) userId: number,
+    @Body('driverId', ParseIntPipe) driverId: number,
+  ) {
+    return this.carpoolTripService.rejectRider(tripId, userId, driverId);
+  }
+
+  @Patch(':tripId/start')
+  startTrip(
+    @Param('tripId', ParseIntPipe) tripId: number,
+    @Body('driverId', ParseIntPipe) driverId: number,
+  ) {
+    return this.carpoolTripService.startTrip(tripId, driverId);
+  }
+
+  @Patch(':tripId/confirm-meeting-point')
+  confirmMeetingPoint(
+    @Param('tripId', ParseIntPipe) tripId: number,
+    @Body('driverId', ParseIntPipe) driverId: number,
+  ) {
+    return this.carpoolTripService.confirmMeetingPoint(tripId, driverId);
+  }
+
+  @Patch(':tripId/complete')
+  completeTrip(
+    @Param('tripId', ParseIntPipe) tripId: number,
+    @Body('driverId', ParseIntPipe) driverId: number,
+  ) {
+    return this.carpoolTripService.completeTrip(tripId, driverId);
+  }
+
+  @Patch(':tripId/cancel')
+  cancelTrip(
+    @Param('tripId', ParseIntPipe) tripId: number,
+    @Body('driverId', ParseIntPipe) driverId: number,
+    @Body('reason') reason: string,
+  ) {
+    return this.carpoolTripService.cancelTrip(tripId, driverId, reason);
   }
 }

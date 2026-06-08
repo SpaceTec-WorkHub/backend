@@ -13,13 +13,18 @@ export class CreateCarpoolTripDto {
   @IsDateString()
   trip_date!: string;
 
+  @IsDateString()
+  @IsOptional()
+  departure_time?: string;
+
   @IsEnum(CarpoolTripStatus)
   @IsOptional()
   status?: CarpoolTripStatus;
 
   @IsNumber()
   @Min(1)
-  seats_total!: number;
+  @IsOptional()
+  seats_total?: number;
 
   @IsNumber()
   vehicle_id!: number;
@@ -31,6 +36,10 @@ export class CreateCarpoolTripDto {
   @IsString()
   @IsNotEmpty()
   destination!: string;
+
+  @IsString()
+  @IsOptional()
+  meeting_point?: string;
 
   @IsString()
   @IsOptional()

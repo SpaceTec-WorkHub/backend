@@ -19,14 +19,14 @@ export class SpaceService {
 
   findAll() {
     return this.spaceRepository.find({
-      relations: ['space_type', 'zone'],
+      relations: ['space_type', 'zone', 'zone.floor', 'zone.floor.building'],
     });
   }
 
   async findOne(space_id: number) {
     const space = await this.spaceRepository.findOne({
       where: { space_id },
-      relations: ['space_type', 'zone'],
+      relations: ['space_type', 'zone', 'zone.floor', 'zone.floor.building'],
     });
 
     if (!space) {

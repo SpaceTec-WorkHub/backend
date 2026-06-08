@@ -6,9 +6,13 @@ import { CarpoolTrip } from './entities/carpool_trip.entity';
 import { TripRider } from './entities/trip_rider.entity';
 import { User } from '../user/entities/user.entity';
 import { Vehicle } from '../vehicle/entities/vehicle.entity';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([CarpoolTrip, TripRider, User, Vehicle])],
+  imports: [
+    TypeOrmModule.forFeature([CarpoolTrip, TripRider, User, Vehicle]),
+    NotificationsModule,
+  ],
   controllers: [CarpoolTripController],
   providers: [CarpoolTripService],
   exports: [CarpoolTripService],

@@ -12,7 +12,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, LessThanOrEqual, Repository } from 'typeorm';
 import { Reservation, ReservationStatus } from './entities/reservation.entity';
 import { Space, SpaceStatus } from '../space/entities/space.entity';
-import { Incident, IncidentStatus } from './entities/incident.entity';
+import { Incident, IncidentStatus, IncidentType } from './entities/incident.entity';
 import { CreateSpecialEventDto } from './dto/create-special-event.dto';
 import { ReportIncidentDto } from './dto/report-incident.dto';
 import { Block } from '../block/entities/block.entity';
@@ -20,6 +20,7 @@ import { GamificationService } from '../gamification/gamification.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationReason } from '../notifications/entities/notification.entity';
 import { Event, EventStatus } from '../event/entities/event.entity';
+import { Guest } from './entities/guest.entity';
 
 const NO_SHOW_GRACE_PERIOD_MINUTES = 20;
 const OVERSTAY_EXTENSION_MS = 60 * 60 * 1000; // 1 hour
@@ -41,6 +42,8 @@ export class ReservationService implements OnModuleInit {
     private readonly blockRepository: Repository<Block>,
     @InjectRepository(Event)
     private readonly eventRepository: Repository<Event>,
+    @InjectRepository(Guest)
+    private readonly guestRepository: Repository<Guest>,
     private readonly gamificationService: GamificationService,
     private readonly notificationsService: NotificationsService,
   ) {}
@@ -155,8 +158,14 @@ export class ReservationService implements OnModuleInit {
           ReservationStatus.RESERVED,
           ReservationStatus.CHECKED_IN,
           ReservationStatus.CHECKOUT_PENDING,
-          ReservationStatus.INCIDENT,
+          // INCIDENT excluded: users with an incident must be able to select
+          // alternative spaces of the same type without being blocked
         ]),
+        // Excluir sub-reservas de invitados (tienen parent_reservation_id)
+        // y reservas creadas en nombre de un invitado (is_guest_reservation)
+        // para no bloquear al usuario de reservar su propio espacio
+        parent_reservation_id: IsNull(),
+        is_guest_reservation: false,
       },
       relations: ['space', 'space.space_type'],
       order: {
@@ -197,10 +206,17 @@ export class ReservationService implements OnModuleInit {
     requestedSpace: { space_type?: { name?: string | null } | null },
     start: Date,
     end: Date,
+    options?: { allowMultipleParking?: boolean },
   ) {
     const requestedGroup = this.getSpaceTypeGroup(requestedSpace);
 
     if (requestedGroup === 'other') {
+      return;
+    }
+
+    // If requested group is 'parking' and caller explicitly allows multiple parking
+    // allocations (for example when creating extra parking spaces), skip the conflict check.
+    if (requestedGroup === 'parking' && options?.allowMultipleParking) {
       return;
     }
 
@@ -265,6 +281,7 @@ export class ReservationService implements OnModuleInit {
       'event',
       'checkEvents',
       'incidents',
+      'guests',
     ];
   }
 
@@ -351,12 +368,15 @@ export class ReservationService implements OnModuleInit {
         `COALESCE(
           CASE
             WHEN reservation.status = :checkedOutStatus THEN reservation.check_out_time
+            WHEN reservation.status = :incidentStatus AND reservation.check_out_time IS NOT NULL
+              THEN reservation.check_out_time
           END,
           reservation.end_time
         ) > :start`,
         {
           start: overlapStart,
           checkedOutStatus: ReservationStatus.CHECKED_OUT,
+          incidentStatus: ReservationStatus.INCIDENT,
         },
       );
 
@@ -456,12 +476,30 @@ export class ReservationService implements OnModuleInit {
       throw new NotFoundException('Space not found');
     }
 
-    await this.assertUserDoesNotHaveConflictingSpaceTypeReservation(
-      createReservationDto.user_id,
-      requestedSpace,
-      startTime,
-      endTime,
-    );
+    // Use a typed alias for optional payload fields to satisfy static analyzer
+    const payload = createReservationDto as unknown as {
+      extra_parking_space_ids?: number[];
+      guests?: { name: string; email?: string }[];
+      is_guest_reservation?: boolean;
+    };
+
+    const isGuestReservation = payload.is_guest_reservation === true;
+
+    const allowMultipleParking =
+      Array.isArray(payload.extra_parking_space_ids) &&
+      payload.extra_parking_space_ids.length > 0;
+
+    // Guest reservations are created on behalf of a visitor and must not
+    // count against the host's own space-type quota
+    if (!isGuestReservation) {
+      await this.assertUserDoesNotHaveConflictingSpaceTypeReservation(
+        createReservationDto.user_id,
+        requestedSpace,
+        startTime,
+        endTime,
+        { allowMultipleParking },
+      );
+    }
 
     const newReservation = this.reservationRepository.create({
       ...createReservationDto,
@@ -506,6 +544,186 @@ export class ReservationService implements OnModuleInit {
             },
           )}`,
     });
+
+    // Persist any guests attached to the reservation DTO
+    const guests = payload.guests;
+    type GuestInput = {
+      name: string;
+      email?: string;
+      extra_parking_space_id?: number;
+    };
+    const guestType = guests as unknown as GuestInput[] | undefined;
+
+    if (Array.isArray(guestType) && guestType.length > 0) {
+      for (let gIdx = 0; gIdx < guestType.length; gIdx++) {
+        const g = guestType[gIdx];
+        try {
+          await this.guestRepository.save(
+            this.guestRepository.create({
+              reservation_id: savedReservation.reservation_id,
+              name: g.name,
+              email: g.email ?? null,
+            }),
+          );
+
+          // If guest requested extra parking, create a reservation for that space
+          if (g.extra_parking_space_id) {
+            const guestParkingSpaceId = g.extra_parking_space_id;
+
+            if (guestParkingSpaceId === savedReservation.space_id) {
+              throw new BadRequestException(
+                `Guest ${g.name}: cannot request the same space as extra parking`,
+              );
+            }
+
+            const guestParkingSpace = await this.spaceRepository.findOne({
+              where: { space_id: guestParkingSpaceId },
+              relations: ['space_type'],
+            });
+            if (!guestParkingSpace) {
+              throw new NotFoundException(
+                `Extra parking space ${guestParkingSpaceId} for guest ${g.name} not found`,
+              );
+            }
+
+            const parkingGroup = this.getSpaceTypeGroup(guestParkingSpace);
+            if (parkingGroup !== 'parking') {
+              throw new BadRequestException(
+                `Space ${guestParkingSpaceId} for guest ${g.name} is not a parking space`,
+              );
+            }
+
+            await this.assertSpaceIsAvailable(
+              guestParkingSpaceId,
+              startTime,
+              endTime,
+            );
+
+            const guestParkingReservation = this.reservationRepository.create({
+              start_time: startTime,
+              end_time: endTime,
+              code: `${savedReservation.code}-G-${gIdx + 1}`,
+              user_id: savedReservation.user_id,
+              space_id: guestParkingSpaceId,
+              parent_reservation_id: savedReservation.reservation_id,
+              status: ReservationStatus.RESERVED,
+              check_in_time: null,
+              check_out_time: null,
+              no_show_at: null,
+              incident_notes: null,
+              reassigned_space_id: null,
+              latitude_check_in: null,
+              longitude_check_in: null,
+            });
+
+            const savedGuestParking = await this.reservationRepository.save(
+              guestParkingReservation,
+            );
+
+            // Link guest info to the parking sub-reservation so it shows in history
+            const parkingReservationId = Number(
+              savedGuestParking.reservation_id,
+            );
+            await this.guestRepository.save(
+              this.guestRepository.create({
+                reservation_id: parkingReservationId,
+                name: g.name,
+                email: g.email ?? null,
+              }),
+            );
+
+            const userId = savedReservation.user_id;
+            await this.sendReservationNotification({
+              userId: typeof userId === 'number' ? userId : -1,
+              reason: NotificationReason.RESERVATION_SUCCESS,
+              title: 'Estacionamiento adicional para invitado reservado',
+              content: `Se asignó el espacio de estacionamiento ${savedGuestParking.space_id} para el invitado ${g.name} en ${this.buildReservationSummary(
+                savedGuestParking,
+              )}.`,
+            });
+          }
+        } catch (err) {
+          console.error('[GUEST SAVE ERROR]', err);
+        }
+      }
+    }
+
+    // If the client requested extra parking spaces, allocate them as separate reservations.
+    const extraIds: number[] | undefined = payload.extra_parking_space_ids;
+
+    if (Array.isArray(extraIds) && extraIds.length > 0) {
+      // Validate availability for all extra parking spaces before creating any.
+      for (const extraSpaceId of extraIds) {
+        if (extraSpaceId === savedReservation.space_id) {
+          throw new BadRequestException(
+            'Cannot request the same space as extra parking',
+          );
+        }
+
+        const extraSpace = await this.spaceRepository.findOne({
+          where: { space_id: extraSpaceId },
+          relations: ['space_type'],
+        });
+        if (!extraSpace) {
+          throw new NotFoundException(
+            `Extra parking space ${extraSpaceId} not found`,
+          );
+        }
+
+        const group = this.getSpaceTypeGroup(extraSpace);
+        if (group !== 'parking') {
+          throw new BadRequestException(
+            `Space ${extraSpaceId} is not a parking space`,
+          );
+        }
+
+        await this.assertSpaceIsAvailable(extraSpaceId, startTime, endTime);
+      }
+
+      const createdExtras: Reservation[] = [];
+
+      for (let i = 0; i < extraIds.length; i++) {
+        const extraSpaceId = extraIds[i];
+
+        const extraReservation = this.reservationRepository.create({
+          start_time: startTime,
+          end_time: endTime,
+          code: `${savedReservation.code}-P-${i + 1}`,
+          user_id: savedReservation.user_id,
+          space_id: extraSpaceId,
+          parent_reservation_id: savedReservation.reservation_id,
+          status: ReservationStatus.RESERVED,
+          check_in_time: null,
+          check_out_time: null,
+          no_show_at: null,
+          incident_notes: null,
+          reassigned_space_id: null,
+          latitude_check_in: null,
+          longitude_check_in: null,
+        });
+
+        const savedExtra =
+          await this.reservationRepository.save(extraReservation);
+
+        createdExtras.push(savedExtra);
+        const extraUserId = savedExtra.user_id as number;
+
+        await this.sendReservationNotification({
+          userId: extraUserId,
+          reason: NotificationReason.RESERVATION_SUCCESS,
+          title: 'Espacio de estacionamiento adicional reservado',
+          content: `Se te asignó el espacio de estacionamiento ${savedExtra.space_id} para ${this.buildReservationSummary(
+            savedExtra,
+          )}.`,
+        });
+      }
+
+      // Optionally include created extras in the response for the client.
+      return {
+        main: savedReservation,
+        extras: createdExtras,
+      } as unknown as Reservation;
+    }
 
     return savedReservation;
   }
@@ -755,17 +973,20 @@ export class ReservationService implements OnModuleInit {
         `COALESCE(
           CASE
             WHEN reservation.status = :checkedOutStatus THEN reservation.check_out_time
+            WHEN reservation.status = :incidentStatus AND reservation.check_out_time IS NOT NULL
+              THEN reservation.check_out_time
           END,
           reservation.end_time
         ) > :start`,
         {
           start: overlapStart,
           checkedOutStatus: ReservationStatus.CHECKED_OUT,
+          incidentStatus: ReservationStatus.INCIDENT,
         },
       )
       .getRawMany<{ space_id: number }>();
 
-    const occupiedIds = new Set(
+    const occupiedIds = new Set<number>(
       overlappingReservations.map((item) => Number(item.space_id)),
     );
 
@@ -963,6 +1184,50 @@ export class ReservationService implements OnModuleInit {
     return this.reservationRepository.save(reservation);
   }
 
+  async checkInEvent(
+    reservationId: number,
+    userId: number,
+    options?: { latitude?: number; longitude?: number; isAdmin?: boolean },
+  ) {
+    if (!options?.isAdmin) {
+      throw new ForbiddenException('Only admins can check in an event');
+    }
+
+    const reservation = await this.findOne(reservationId);
+
+    if (!reservation.event_id) {
+      throw new BadRequestException(
+        'This reservation is not linked to an event',
+      );
+    }
+
+    const eventReservations = await this.reservationRepository.find({
+      where: {
+        event_id: reservation.event_id,
+        status: ReservationStatus.RESERVED,
+      },
+    });
+
+    const checkedInAt = new Date();
+
+    for (const eventReservation of eventReservations) {
+      eventReservation.status = ReservationStatus.CHECKED_IN;
+      eventReservation.check_in_time = checkedInAt;
+      eventReservation.latitude_check_in = options?.latitude ?? null;
+      eventReservation.longitude_check_in = options?.longitude ?? null;
+    }
+
+    if (eventReservations.length > 0) {
+      await this.reservationRepository.save(eventReservations);
+    }
+
+    return {
+      event_id: reservation.event_id,
+      checked_in_count: eventReservations.length,
+      reservations: eventReservations,
+    };
+  }
+
   async checkOut(
     reservationId: number,
     userId: number,
@@ -1019,6 +1284,16 @@ export class ReservationService implements OnModuleInit {
     reservation.status = ReservationStatus.INCIDENT;
     reservation.incident_notes =
       reportIncidentDto.notes ?? reportIncidentDto.description;
+
+    // For reassignment and other incidents the user is leaving the space,
+    // so mark it as freed now so others can book it
+    const freesSpace =
+      reportIncidentDto.type === IncidentType.REASSIGNMENT ||
+      reportIncidentDto.type === IncidentType.OTHER;
+    if (freesSpace) {
+      reservation.check_out_time = new Date();
+    }
+
     const updatedReservation =
       await this.reservationRepository.save(reservation);
 
@@ -1063,6 +1338,38 @@ export class ReservationService implements OnModuleInit {
   async update(id: number, updateReservationDto: UpdateReservationDto) {
     const existingReservation = await this.findOne(id);
     const previousStatus = existingReservation.status;
+
+    // Validate availability when the time range changes
+    if (updateReservationDto.start_time || updateReservationDto.end_time) {
+      const newStart = updateReservationDto.start_time
+        ? new Date(updateReservationDto.start_time)
+        : existingReservation.start_time;
+      const newEnd = updateReservationDto.end_time
+        ? new Date(updateReservationDto.end_time)
+        : existingReservation.end_time;
+
+      if (Number.isNaN(newStart.getTime()) || Number.isNaN(newEnd.getTime())) {
+        throw new BadRequestException('Formato de fecha inválido.');
+      }
+      if (newEnd <= newStart) {
+        throw new BadRequestException(
+          'La hora de fin debe ser posterior a la hora de inicio.',
+        );
+      }
+      if (newEnd <= new Date()) {
+        throw new BadRequestException(
+          'No puedes reservar un horario que ya terminó.',
+        );
+      }
+
+      // Check availability ignoring the current reservation (it frees its own slot)
+      await this.assertSpaceIsAvailable(
+        existingReservation.space_id,
+        newStart,
+        newEnd,
+        existingReservation.reservation_id,
+      );
+    }
 
     this.reservationRepository.merge(existingReservation, updateReservationDto);
 
