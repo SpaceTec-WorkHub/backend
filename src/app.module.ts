@@ -30,7 +30,8 @@ import { VehicleModule } from './vehicle/vehicle.module';
 import { DevSeedService } from './dev-seed.service';
 import { GamificationModule } from './gamification/gamification.module';
 import { NotificationsModule } from './notifications/notifications.module';
-
+import { IaModule } from './ia/ia_modules';
+import { McpNavigationModule } from './ia/mcp/mcp_navigation.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -78,6 +79,8 @@ import { NotificationsModule } from './notifications/notifications.module';
     VehicleModule,
     GamificationModule,
     NotificationsModule,
+    IaModule,
+    McpNavigationModule,
 
     // App Module imports other modules here
   ],
