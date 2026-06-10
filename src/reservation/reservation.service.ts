@@ -286,6 +286,33 @@ export class ReservationService implements OnModuleInit {
     ];
   }
 
+  // Calcula el offset (en minutos) de una zona horaria respecto a UTC para un instante dado.
+  private getTimeZoneOffsetMinutes(timeZone: string, date: Date): number {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour12: false,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).formatToParts(date);
+
+    const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? '0');
+
+    const asUtc = Date.UTC(
+      get('year'),
+      get('month') - 1,
+      get('day'),
+      get('hour') % 24,
+      get('minute'),
+      get('second'),
+    );
+
+    return (asUtc - date.getTime()) / 60000;
+  }
+
   private parseDateTime(date: string, timeOrIso: string) {
     if (timeOrIso.includes('T')) {
       const parsedIso = new Date(timeOrIso);
@@ -299,7 +326,14 @@ export class ReservationService implements OnModuleInit {
 
     const [year, month, day] = date.split('-').map(Number);
     const [hours, minutes] = timeOrIso.split(':').map(Number);
-    const parsedLocal = new Date(year, month - 1, day, hours, minutes, 0, 0);
+
+    // Las fechas "date" + "HH:mm" representan hora local de Monterrey (la zona
+    // horaria asumida por el frontend al generar timestamps ISO). Las
+    // interpretamos en esa zona sin importar el huso horario del servidor,
+    // para que coincidan con los timestamps ya guardados en las reservaciones.
+    const naiveUtcMillis = Date.UTC(year, month - 1, day, hours, minutes, 0, 0);
+    const offsetMinutes = this.getTimeZoneOffsetMinutes(MONTERREY_TIME_ZONE, new Date(naiveUtcMillis));
+    const parsedLocal = new Date(naiveUtcMillis - offsetMinutes * 60 * 1000);
 
     if (Number.isNaN(parsedLocal.getTime())) {
       throw new BadRequestException('Invalid date-time format');
