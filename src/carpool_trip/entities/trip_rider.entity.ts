@@ -38,13 +38,13 @@ export class TripRider extends BaseEntity {
   requested_at!: Date;
 
   @Column({ type: 'timestamp', nullable: true })
-  responded_at?: Date;
+  responded_at?: Date | null;
 
   @Column({ type: 'timestamp', nullable: true })
-  joined_at?: Date;
+  joined_at?: Date | null;
 
   @Column({ type: 'timestamp', nullable: true })
-  left_at?: Date;
+  left_at?: Date | null;
 
   @ManyToOne(() => CarpoolTrip, (trip) => trip.tripRiders)
   @JoinColumn({ name: 'trip_id' })

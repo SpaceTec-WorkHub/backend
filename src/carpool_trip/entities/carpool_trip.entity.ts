@@ -10,6 +10,7 @@ import { BaseEntity } from '../../shared/base.entity';
 import { User } from '../../user/entities/user.entity';
 import { Vehicle } from '../../vehicle/entities/vehicle.entity';
 import { TripRider } from './trip_rider.entity';
+import { CarpoolTripIncident } from './carpool_trip_incident.entity';
 
 export enum CarpoolTripStatus {
   DRAFT = 'draft',
@@ -66,4 +67,7 @@ export class CarpoolTrip extends BaseEntity {
 
   @OneToMany(() => TripRider, (tripRider) => tripRider.trip)
   tripRiders!: TripRider[];
+
+  @OneToMany(() => CarpoolTripIncident, (incident) => incident.trip)
+  incidents!: CarpoolTripIncident[];
 }
