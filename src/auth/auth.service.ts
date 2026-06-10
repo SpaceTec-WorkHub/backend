@@ -29,7 +29,7 @@ export class AuthService {
     const user = await this.userService.findByEmail(email);
 
     if (!user || !user.password) {
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException('Credenciales inválidas');
     }
 
     const passwordMatches = await this.userService.comparePassword(
@@ -38,13 +38,13 @@ export class AuthService {
     );
 
     if (!passwordMatches) {
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException('Credenciales inválidas');
     }
 
     const { password: _password, ...safeUser } = user;
 
     return {
-      message: 'Login successful',
+      message: 'Login exitoso',
       user: safeUser,
     };
   }
@@ -78,7 +78,7 @@ export class AuthService {
           reason: NotificationReason.PASSWORD_RESET_REQUESTED,
         });
       } catch (error) {
-        console.error('Failed to send password reset email', error);
+        console.error('No se pudo enviar el correo de solicitud de restablecimiento de contraseña', error);
       }
     }
 
@@ -91,13 +91,13 @@ export class AuthService {
     const { email, code, new_password, confirm_password } = resetPasswordDto;
 
     if (new_password !== confirm_password) {
-      throw new BadRequestException('New password confirmation does not match');
+      throw new BadRequestException('La confirmación de la nueva contraseña no coincide');
     }
 
     const user = await this.userService.findByEmail(email);
 
     if (!user) {
-      throw new BadRequestException('Invalid or expired verification code');
+      throw new BadRequestException('Código de verificación inválido o expirado');
     }
 
     const resetCode = await this.passwordResetCodeRepository.findOne({
@@ -106,13 +106,13 @@ export class AuthService {
     });
 
     if (!resetCode) {
-      throw new BadRequestException('Invalid or expired verification code');
+      throw new BadRequestException('Código de verificación inválido o expirado');
     }
 
     const codeMatches = await bcrypt.compare(code, resetCode.code_hash);
 
     if (!codeMatches) {
-      throw new BadRequestException('Invalid or expired verification code');
+      throw new BadRequestException('Código de verificación inválido o expirado');
     }
 
     resetCode.used = true;
@@ -128,9 +128,9 @@ export class AuthService {
         reason: NotificationReason.PASSWORD_RESET_COMPLETED,
       });
     } catch (error) {
-      console.error('Failed to send password reset confirmation email', error);
+      console.error('No se pudo enviar el correo de confirmación de restablecimiento de contraseña', error);
     }
 
-    return { message: 'Password updated successfully' };
+    return { message: 'Contraseña actualizada correctamente' };
   }
 }
