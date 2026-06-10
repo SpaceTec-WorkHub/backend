@@ -83,6 +83,17 @@ export class Reservation extends BaseEntity {
   @Column({ type: 'boolean', default: false })
   is_guest_reservation!: boolean;
 
+  // True when the system (not the user) closed this reservation, e.g. office
+  // closing or an overstay that was never checked out. Used by gamification
+  // to penalize instead of rewarding the checkout.
+  @Column({ type: 'boolean', default: false })
+  auto_checked_out!: boolean;
+
+  // Points subtracted by the gamification service for overstaying the
+  // reservation window (set when the reservation is auto-extended).
+  @Column({ type: 'integer', default: 0 })
+  overstay_penalty_points!: number;
+
   @ManyToOne(() => User, (user) => user.reservations)
   @JoinColumn({ name: 'user_id' })
   user!: User;

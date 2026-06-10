@@ -131,6 +131,14 @@ export class UserService {
     return { verified: true };
   }
 
+  async setPassword(userId: number, newPassword: string) {
+    const user = await this.findOneWithPassword(userId);
+
+    user.password = await this.hashPassword(newPassword);
+
+    await this.userRepository.save(user);
+  }
+
   async changePassword(userId: number, changePasswordDto: ChangePasswordDto) {
     const { current_password, new_password, confirm_password } = changePasswordDto;
 

@@ -7,9 +7,21 @@ import { SpaceUserUsage } from '../space_user_usage/entities/space_user_usage.en
 import { Release } from '../release/entities/release.entity';
 import { User } from '../user/entities/user.entity';
 import { GamificationReward } from './entities/gamification-reward.entity';
+import { CarpoolTrip } from '../carpool_trip/entities/carpool_trip.entity';
+import { TripRider } from '../carpool_trip/entities/trip_rider.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Reservation, SpaceUserUsage, Release, User, GamificationReward])],
+  imports: [
+    TypeOrmModule.forFeature([
+      Reservation,
+      SpaceUserUsage,
+      Release,
+      User,
+      GamificationReward,
+      CarpoolTrip,
+      TripRider,
+    ]),
+  ],
   controllers: [GamificationController],
   providers: [GamificationService],
   exports: [GamificationService],

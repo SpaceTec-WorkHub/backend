@@ -15,6 +15,14 @@ import { User } from '../user/entities/user.entity';
 import { GamificationReward } from './entities/gamification-reward.entity';
 import { CreateGamificationRewardDto } from './dto/create-gamification-reward.dto';
 import { UpdateGamificationRewardDto } from './dto/update-gamification-reward.dto';
+import {
+  CarpoolTrip,
+  CarpoolTripStatus,
+} from '../carpool_trip/entities/carpool_trip.entity';
+import {
+  TripRider,
+  TripRiderStatus,
+} from '../carpool_trip/entities/trip_rider.entity';
 
 type PeriodInfo = {
   start: Date;
@@ -36,6 +44,8 @@ type LeaderboardRow = {
   rewardCount: number;
   plannedReservations: number;
   earlyReservations: number;
+  cancellations: number;
+  carpoolTrips: number;
 };
 
 type RewardEntry = {
@@ -54,6 +64,21 @@ type RewardState = {
 
 const LEVEL_STEP = 250;
 
+// Point values used by the gamification model. Positive values reward good
+// usage of the app, negative values penalize misuse.
+const POINTS_RESERVATION_CREATED = 10;
+const POINTS_CHECK_IN = 15;
+const POINTS_CHECKOUT_DONE = 20;
+const POINTS_PLANNED_BONUS = 15;
+const POINTS_EARLY_BONUS = 5;
+const POINTS_CARPOOL_DRIVER = 20;
+const POINTS_CARPOOL_RIDER = 15;
+const PENALTY_CANCELLATION = 5;
+const PENALTY_REPEATED_CANCELLATION = 5;
+const REPEATED_CANCELLATION_THRESHOLD = 2;
+const PENALTY_NO_SHOW = 15;
+const PENALTY_NO_CHECKOUT = 10;
+
 @Injectable()
 export class GamificationService {
   constructor(
@@ -67,6 +92,10 @@ export class GamificationService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(GamificationReward)
     private readonly gamificationRewardRepository: Repository<GamificationReward>,
+    @InjectRepository(CarpoolTrip)
+    private readonly carpoolTripRepository: Repository<CarpoolTrip>,
+    @InjectRepository(TripRider)
+    private readonly tripRiderRepository: Repository<TripRider>,
   ) {}
 
   private getCurrentPeriod(referenceDate = new Date()): PeriodInfo {
@@ -104,11 +133,17 @@ export class GamificationService {
   }
 
   // Apply a penalty to a user's gamification score for overstaying a reservation.
-  // This is a best-effort method that callers can use; implementation may be expanded later.
+  // The penalty is stored on the reservation itself and subtracted on the fly
+  // when the leaderboard is built.
   async applyPenalty(userId: number, points: number, reservationId?: number) {
-    // Placeholder: current gamification model calculates points from events and rewards.
-    // Integrate a persistent adjustment mechanism here if you want penalties to affect leaderboard.
-    return;
+    if (!reservationId) {
+      return;
+    }
+
+    await this.reservationRepository.update(
+      { reservation_id: reservationId, user_id: userId },
+      { overstay_penalty_points: points },
+    );
   }
 
   private getLevel(points: number) {
@@ -127,26 +162,43 @@ export class GamificationService {
     let points = 0;
 
     if (reservation.status === ReservationStatus.RESERVED) {
-      points += 10;
+      points += POINTS_RESERVATION_CREATED;
     }
 
     if (reservation.status === ReservationStatus.CHECKED_OUT) {
-      points += 20;
+      // A checkout the system had to force (office closing, overstay never
+      // resolved, etc.) is penalized instead of rewarded.
+      points += reservation.auto_checked_out
+        ? -PENALTY_NO_CHECKOUT
+        : POINTS_CHECKOUT_DONE;
     }
 
     if (reservation.status === ReservationStatus.CANCELLED) {
-      points -= 5;
+      points -= PENALTY_CANCELLATION;
     }
+
+    if (reservation.status === ReservationStatus.NO_SHOW) {
+      points -= PENALTY_NO_SHOW;
+    }
+
+    // Reward the act of checking in regardless of how the reservation ended.
+    if (reservation.check_in_time) {
+      points += POINTS_CHECK_IN;
+    }
+
+    // Penalty applied when the reservation overstayed and had to be
+    // auto-extended (set via applyPenalty).
+    points -= reservation.overstay_penalty_points ?? 0;
 
     const createdAt = new Date(reservation.createdAt);
     const startTime = new Date(reservation.start_time);
 
     if (startTime.getTime() - createdAt.getTime() >= 24 * 60 * 60 * 1000) {
-      points += 15;
+      points += POINTS_PLANNED_BONUS;
     }
 
     if (startTime.getHours() < 10) {
-      points += 5;
+      points += POINTS_EARLY_BONUS;
     }
 
     return points;
@@ -184,19 +236,32 @@ export class GamificationService {
       order: { full_name: 'ASC' },
     });
 
-    const [reservations, spaceUsages, releases] = await Promise.all([
-      this.reservationRepository.find({
-        where: { createdAt: Between(period.start, period.end) },
-        order: { createdAt: 'DESC' },
-      }),
-      this.spaceUserUsageRepository.find({
-        where: { createdAt: Between(period.start, period.end) },
-      }),
-      this.releaseRepository.find({
-        where: { createdAt: Between(period.start, period.end) },
-        relations: ['reservation'],
-      }),
-    ]);
+    const [reservations, spaceUsages, releases, completedTrips, completedRides] =
+      await Promise.all([
+        this.reservationRepository.find({
+          where: { createdAt: Between(period.start, period.end) },
+          order: { createdAt: 'DESC' },
+        }),
+        this.spaceUserUsageRepository.find({
+          where: { createdAt: Between(period.start, period.end) },
+        }),
+        this.releaseRepository.find({
+          where: { createdAt: Between(period.start, period.end) },
+          relations: ['reservation'],
+        }),
+        this.carpoolTripRepository.find({
+          where: {
+            status: CarpoolTripStatus.COMPLETED,
+            updatedAt: Between(period.start, period.end),
+          },
+        }),
+        this.tripRiderRepository.find({
+          where: {
+            status: TripRiderStatus.COMPLETED,
+            left_at: Between(period.start, period.end),
+          },
+        }),
+      ]);
 
     const leaderboardMap = new Map<number, Omit<LeaderboardRow, 'rank'>>();
 
@@ -214,6 +279,8 @@ export class GamificationService {
         rewardCount: 0,
         plannedReservations: 0,
         earlyReservations: 0,
+        cancellations: 0,
+        carpoolTrips: 0,
       });
     }
 
@@ -226,6 +293,14 @@ export class GamificationService {
 
       row.reservations += 1;
       row.points += this.getReservationPoints(reservation);
+
+      if (reservation.status === ReservationStatus.CANCELLED) {
+        row.cancellations += 1;
+      }
+
+      if (reservation.check_in_time) {
+        row.checkIns += 1;
+      }
 
       const createdAt = new Date(reservation.createdAt);
       const startTime = new Date(reservation.start_time);
@@ -265,6 +340,38 @@ export class GamificationService {
 
       row.releases += 1;
       row.points += 10;
+    }
+
+    for (const trip of completedTrips) {
+      const row = leaderboardMap.get(trip.driver_id);
+
+      if (!row) {
+        continue;
+      }
+
+      row.carpoolTrips += 1;
+      row.points += POINTS_CARPOOL_DRIVER;
+    }
+
+    for (const ride of completedRides) {
+      const row = leaderboardMap.get(ride.user_id);
+
+      if (!row) {
+        continue;
+      }
+
+      row.carpoolTrips += 1;
+      row.points += POINTS_CARPOOL_RIDER;
+    }
+
+    // Escalating penalty for users who cancel reservations repeatedly within
+    // the same period: every cancellation past the threshold costs extra.
+    for (const row of leaderboardMap.values()) {
+      if (row.cancellations > REPEATED_CANCELLATION_THRESHOLD) {
+        const extraCancellations =
+          row.cancellations - REPEATED_CANCELLATION_THRESHOLD;
+        row.points -= extraCancellations * PENALTY_REPEATED_CANCELLATION;
+      }
     }
 
     const leaderboard = Array.from(leaderboardMap.values())

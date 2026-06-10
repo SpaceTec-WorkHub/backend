@@ -259,6 +259,7 @@ export class ReservationService implements OnModuleInit {
         for (const reservation of orphanedReservations) {
           reservation.status = ReservationStatus.CHECKED_OUT;
           reservation.check_out_time = new Date(reservation.end_time);
+          reservation.auto_checked_out = true;
           await this.reservationRepository.save(reservation);
 
           console.log(
@@ -789,15 +790,43 @@ export class ReservationService implements OnModuleInit {
 
   private async handleEndedReservations(now = new Date()) {
     const endedReservations = await this.reservationRepository.find({
-      where: {
-        status: In([ReservationStatus.RESERVED, ReservationStatus.CHECKED_IN]),
-        check_out_time: IsNull(),
-        end_time: LessThanOrEqual(now),
-      },
+      where: [
+        {
+          status: In([
+            ReservationStatus.RESERVED,
+            ReservationStatus.CHECKED_IN,
+          ]),
+          check_out_time: IsNull(),
+          end_time: LessThanOrEqual(now),
+        },
+        {
+          status: ReservationStatus.CHECKOUT_PENDING,
+          check_out_time: IsNull(),
+          end_time: LessThanOrEqual(now),
+        },
+      ],
       relations: ['user', 'space'],
     });
 
     for (const reservation of endedReservations) {
+      // A reservation already extended once (CHECKOUT_PENDING) and still not
+      // checked out: close it and penalize for not checking out at all.
+      if (reservation.status === ReservationStatus.CHECKOUT_PENDING) {
+        reservation.status = ReservationStatus.CHECKED_OUT;
+        reservation.check_out_time = new Date(reservation.end_time);
+        reservation.auto_checked_out = true;
+        await this.reservationRepository.save(reservation);
+
+        await this.sendReservationNotification({
+          userId: reservation.user_id,
+          reason: NotificationReason.CHECKOUT_PENDING,
+          title: 'Reservación cerrada automáticamente',
+          content: `Tu reservación se cerró automáticamente porque no hiciste checkout a tiempo, ni durante la extensión otorgada. Esto afecta tus puntos de gamificación. ${this.buildReservationSummary(reservation)}`,
+        });
+
+        continue;
+      }
+
       try {
         const proposedStart = new Date(reservation.end_time);
         const proposedEnd = new Date(
@@ -825,7 +854,7 @@ export class ReservationService implements OnModuleInit {
         });
 
         try {
-          await this.gamificationService.applyPenalty?.(
+          await this.gamificationService.applyPenalty(
             reservation.user_id,
             OVERSTAY_PENALTY_POINTS,
             reservation.reservation_id,
@@ -837,6 +866,7 @@ export class ReservationService implements OnModuleInit {
         // Could not extend due to overlap/block; finalize as checked out
         reservation.status = ReservationStatus.CHECKED_OUT;
         reservation.check_out_time = new Date(reservation.end_time);
+        reservation.auto_checked_out = true;
         await this.reservationRepository.save(reservation);
       }
     }
@@ -873,6 +903,7 @@ export class ReservationService implements OnModuleInit {
       try {
         reservation.status = ReservationStatus.CHECKED_OUT;
         reservation.check_out_time = closingTime;
+        reservation.auto_checked_out = true;
 
         await this.reservationRepository.save(reservation);
 
