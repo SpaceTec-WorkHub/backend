@@ -8,7 +8,7 @@ describe('PriorityLevelController', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PriorityLevelController],
-      providers: [PriorityLevelService],
+      providers: [{ provide: PriorityLevelService, useValue: {} }],
     }).compile();
 
     controller = module.get<PriorityLevelController>(PriorityLevelController);

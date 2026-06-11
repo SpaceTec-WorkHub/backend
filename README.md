@@ -23,7 +23,86 @@
 
 ## Description
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+Backend de **WorkHub**, construido con [NestJS](https://github.com/nestjs/nest) (Node.js + TypeScript).
+
+## Arquitectura
+
+El backend sigue una arquitectura modular tipo "monolito modular":
+
+- Cada dominio de negocio se implementa como un módulo de Nest independiente (`module` + `controller` + `service` + `dto` + `entities`), registrado en [src/app.module.ts](src/app.module.ts).
+- **Persistencia**: PostgreSQL mediante TypeORM (`TypeOrmModule.forRootAsync`), con migraciones en `src/migrations/`. La conexión se configura con variables de entorno validadas en [src/env.validation.ts](src/env.validation.ts).
+- **Autenticación/autorización**: `AuthModule` (JWT) y `RoleModule` para control de acceso por rol.
+- **Documentación de API**: Swagger, expuesto en `/api/docs` (ver [src/main.ts](src/main.ts)).
+- **IA**: `IaModule` integra Google Generative AI y un servidor de navegación basado en MCP (Model Context Protocol) para el asistente del sistema.
+- **Tareas programadas**: `@nestjs/schedule` (p. ej. seeds de desarrollo y procesamiento de reservas/eventos de check-in).
+- **Base de datos local**: PostgreSQL 16 vía Docker Compose ([docker-compose.yml](docker-compose.yml)).
+
+## Uso del sistema
+
+Requisitos: Node.js >= 18, [pnpm](https://pnpm.io/), Docker (para la base de datos local).
+
+```bash
+# 1. Instalar dependencias
+$ pnpm install
+
+# 2. Levantar PostgreSQL local
+$ docker compose up -d
+
+# 3. Configurar variables de entorno (.env): DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, RESEND_ENABLED
+
+# 4. Ejecutar migraciones
+$ pnpm migration:run
+
+# 5. Iniciar en modo desarrollo (watch mode)
+$ pnpm start:dev
+```
+
+La API queda disponible en `http://localhost:3000` y la documentación Swagger en `http://localhost:3000/api/docs`.
+
+## Enlaces clave
+
+- Organización del proyecto: https://github.com/SpaceTec-WorkHub/
+- Repositorio Frontend: https://github.com/SpaceTec-WorkHub/WorkHub
+- Repositorio Backend: https://github.com/SpaceTec-WorkHub/backend
+- Backend en producción: https://backend-wh.onrender.com/
+- Frontend en producción: https://work-hub-theta.vercel.app/login
+- Azure DevOps: https://dev.azure.com/SpaceTec/
+
+## Árbol de componentes
+
+```
+src/
+├── app.module.ts          # Módulo raíz, registra todos los módulos
+├── main.ts                 # Bootstrap, Swagger y CORS
+├── env.validation.ts       # Validación de variables de entorno
+├── data-source.ts          # Configuración TypeORM (CLI/migraciones)
+├── dev-seed.service.ts      # Seed de datos de desarrollo
+├── migrations/             # Migraciones de base de datos
+├── shared/                  # Entidades y utilidades compartidas
+├── auth/                    # Autenticación y autorización (JWT)
+├── user/                    # Usuarios
+├── role/                    # Roles
+├── site/ building/ floor/ zone/ block/   # Jerarquía física de ubicaciones
+├── space/ space_type/                    # Espacios reservables y sus tipos
+├── space_user_usage/        # Uso de espacios por usuario
+├── reservation/             # Reservas
+├── release/                 # Liberación de reservas
+├── check_event/             # Eventos de check-in/check-out
+├── priority_level/          # Niveles de prioridad
+├── visit/                   # Visitas
+├── user_need/               # Necesidades/preferencias de usuario
+├── event/                   # Eventos generales
+├── points_ledger/           # Registro de puntos (gamificación)
+├── badge/                   # Insignias
+├── gamification/            # Lógica de gamificación
+├── carpool_trip/            # Viajes compartidos (carpool)
+├── vehicle/                 # Vehículos
+├── notifications/           # Notificaciones
+└── ia/                      # Asistente IA y servidor de navegación MCP
+    └── mcp/
+```
+
+Cada módulo de dominio sigue la misma convención interna: `*.module.ts`, `*.controller.ts`, `*.service.ts`, `dto/`, `entities/`.
 
 ## Project setup
 

@@ -6,6 +6,8 @@ import { Reservation } from './entities/reservation.entity';
 import { Space } from '../space/entities/space.entity';
 import { Incident } from './entities/incident.entity';
 import { Block } from '../block/entities/block.entity';
+import { Event } from '../event/entities/event.entity';
+import { Guest } from './entities/guest.entity';
 import { GamificationService } from '../gamification/gamification.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
@@ -129,6 +131,8 @@ describe('ReservationService', () => {
         { provide: getRepositoryToken(Space), useValue: spaceRepository },
         { provide: getRepositoryToken(Incident), useValue: incidentRepository },
         { provide: getRepositoryToken(Block), useValue: blockRepository },
+        { provide: getRepositoryToken(Event), useValue: {} },
+        { provide: getRepositoryToken(Guest), useValue: {} },
         { provide: GamificationService, useValue: { applyPenalty: jest.fn() } },
         { provide: NotificationsService, useValue: notificationsService },
       ],

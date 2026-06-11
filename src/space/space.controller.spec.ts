@@ -8,7 +8,7 @@ describe('SpaceController', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [SpaceController],
-      providers: [SpaceService],
+      providers: [{ provide: SpaceService, useValue: {} }],
     }).compile();
 
     controller = module.get<SpaceController>(SpaceController);
